@@ -23,7 +23,7 @@
 
 Procedura di migrazione del gestore di ambienti Python da **Anaconda** a **Miniforge**. L'obiettivo è garantire la conformità alle politiche di licenze software, mantenendo la compatibilità con i progetti e gli ambienti esistenti. Un eventuale abbinamento con WSL2 su Windows offre parity con runtime Linux in distribuzione, migliori prestazioni I/O e un flusso di sviluppo più coerente con le pipeline cloud.
 
-## 2. Confronto Anaconda vs. Miniforge
+## 1. Confronto Anaconda vs. Miniforge
 
 Entrambi gli strumenti si basano sullo stesso ecosistema, **Conda**, e sono interamente compatibili a livello di pacchetti e ambienti.
 
@@ -43,7 +43,7 @@ Alcune osservazioni operative:
 - **Licenza:** Miniforge non impone limitazioni per l'utilizzo in contesti aziendali o commerciali (cf. [miniforge/LICENSE at main · conda-forge/miniforge](https://github.com/conda-forge/miniforge/blob/main/LICENSE))
 - **Peso e manutenibilità:** Miniforge riduce tempi di installazione, ingombro su disco e complessità di aggiornamento, risultando più adatto per immagini container e CI/CD.
 
-## 3. Procedura di migrazione
+## 2. Procedura di migrazione
 #### Esportazione degli ambienti Conda
 Prima della rimozione di Anaconda, si possono esportare alcuni o tutti gli ambienti di Conda attualmente presenti nel sistema, in modo da poterli ricreare successivamente con Miniforge.
 
@@ -226,7 +226,7 @@ mamba env list
 
 Confermare che tutti gli ambienti siano stati ricreati correttamente e che i pacchetti principali risultino installati come previsto.
 
-## 4. Best practices post-migrazione
+## 3. Best practices post-migrazione
 
 Dopo il completamento della migrazione da **Anaconda** a **Miniforge**, è raccomandabile adottare alcune pratiche standard per garantire coerenza tra gli ambienti, efficienza nella gestione dei progetti e facilità di manutenzione.
 
@@ -242,7 +242,7 @@ conda config --set channel_priority strict
 mamba update --all
 ```
 - Documentare eventuali pacchetti critici installati al di fuori di Conda per garantire la tracciabilità.
-## 5. Confronto con le altre proposte: WSL & uv
+## 4. Confronto con le altre proposte: WSL & uv
 ### Windows Subsystem for Linux (WSL)
 [WSL](https://learn.microsoft.com/it-it/windows/wsl/) è, a rigore, un layer di compatibilità che permette di eseguire un environment Linux direttamente su Windows, senza l'overhead di macchine virtuali tradizionali. WSL fornisce un ambiente Linux production-like, ma non è altro che un OS environment, non un manager di pacchetti di sviluppo. Fornisce uno _spazio_ in cui lavorare, ma non gestisce, in autonomia, pacchetti software, dipendenze, librerie, o ambienti virtuali. Nonostante sia possibile argomentare a favore dei vantaggi offerti dall'adozione di WSL come strumento di sviluppo (cf. [[#WSL]]), risulterebbe comunque necessario installare un manager come Miniforge _all'interno_ di WSL per gestire dipendenze e installazioni locali, a livello di progetto. In un certo senso, WSL è uno strumento fondazionale, che complementa un package manager, piuttosto che rimpiazzarlo.
 ### Gestione pacchetti con uv
