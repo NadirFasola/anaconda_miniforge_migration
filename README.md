@@ -1,27 +1,33 @@
 ## Contents
 
-- [[#1. Scopo del documento]]
-- [[#2. Differenze principali tra Anaconda e Miniforge]]
-	- [[#Osservazioni operative]]
-- [[#3. Procedura di migrazione]]
-	- [[#Esportazione degli ambienti Conda]]
-	- [[#Disinstallazione di Anaconda]]
-		- [[#Windows]]
-		- [[#Linux]]
-	- [[#Installazione di Miniforge]]
-		- [[#Windows]]
-		- [[#Linux]]
-	- [[#Importazione degli ambienti Conda in Miniforge]]
-	- [[#Verifica finale]]
-- [[#4. Best practices post-migrazione]]
-- [[#5. Confronto con le altre proposte WSL & uv]]
-	- [[#Windows Subsystem for Linux (WSL)]]
-	- [[#Gestione pacchetti con uv]]
-- [[#Appendice e riferimenti]]
-	- [[#Script di automazione]]
-	- [[#Link utili]]
-	- [[#Esempio di file `environment.yml`]]
-	- [[#WSL]]
+- [1. Confronto Anaconda vs. Miniforge](#1-confronto-anaconda-vs-miniforge)
+- [2. Procedura di migrazione](#2-procedura-di-migrazione)
+      + [Esportazione degli ambienti Conda](#esportazione-degli-ambienti-conda)
+      + [Disinstallazione di Anaconda](#disinstallazione-di-anaconda)
+      + [Installazione di Miniforge](#installazione-di-miniforge)
+         - [Windows](#windows)
+      + [Linux / macOS / WSL](#linux-macos-wsl)
+      + [Importazione degli ambienti Conda in Miniforge](#importazione-degli-ambienti-conda-in-miniforge)
+      + [Verifica finale](#verifica-finale)
+- [3. Best practices post-migrazione](#3-best-practices-post-migrazione)
+- [4. Confronto con le altre proposte: WSL & uv](#4-confronto-con-le-altre-proposte-wsl-uv)
+   * [Windows Subsystem for Linux (WSL)](#windows-subsystem-for-linux-wsl)
+   * [Gestione pacchetti con uv](#gestione-pacchetti-con-uv)
+- [Appendice e riferimenti](#appendice-e-riferimenti)
+   * [Script di automazione](#script-di-automazione)
+      + [Riferimento argomenti (Bash ↔ PowerShell)](#riferimento-argomenti-bash-powershell)
+         - [Uninstaller — `anaconda_uninstall.*`](#uninstaller-anaconda_uninstall)
+      + [Installer — `miniforge_install.*`](#installer-miniforge_install)
+      + [Workflow di migrazione **conservativo**](#workflow-di-migrazione-conservativo)
+   * [Link utili](#link-utili)
+   * [Esempio di file `environment.yml`](#esempio-di-file-environmentyml)
+   * [WSL](#wsl)
+      + [Ambiente Linux isolato](#ambiente-linux-isolato)
+      + [Modello di sicurezza Linux](#modello-di-sicurezza-linux)
+      + [Accesso controllato ai dati](#accesso-controllato-ai-dati)
+      + [Performance ed efficienza](#performance-ed-efficienza)
+      + [Allineamento agli standard di settore](#allineamento-agli-standard-di-settore)
+      + [Sicurezza](#sicurezza)
 
 Procedura di migrazione del gestore di ambienti Python da **Anaconda** a **Miniforge**. L'obiettivo è garantire la conformità alle politiche di licenze software, mantenendo la compatibilità con i progetti e gli ambienti esistenti. Un eventuale abbinamento con WSL2 su Windows offre parity con runtime Linux in distribuzione, migliori prestazioni I/O e un flusso di sviluppo più coerente con le pipeline cloud.
 
