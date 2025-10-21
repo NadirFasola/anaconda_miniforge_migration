@@ -313,36 +313,6 @@ Per semplificare il processo di migrazione, sono disponibili **quattro script** 
 
 Sequenza pensata per minimizzare i rischi e mantenere opzioni di rollback. È perfettamente allineata agli script.
 
-```mermaid
-flowchart TB
-  %% Stili
-  classDef optional stroke-dasharray: 5 5, color:#333;
-
-  %% Nodi
-  E1["1. Esporta & valida\nanaconda_uninstall: --export-only"]
-  I2["2. Installa Miniforge (senza init)\nminiforge_install: --no-init"]
-  T3["3. Test installazione\n(conda --version per percorso completo)"]
-  D4["4. De-inizializza Anaconda\nanaconda_uninstall: --deinit-only"]
-  U5["5. Disinstalla Anaconda\nanaconda_uninstall: --uninstall-only"]
-  C5["Opz.: Clean leftovers\nanaconda_uninstall: --clean-only"]
-  M6["6. Inizializza Miniforge\nminiforge_install: --init-only"]
-  T7["7. Test init\n(conda info / env list)"]
-  IM8["8. Import ambienti\nminiforge_install: --import-only"]
-  TW9["9. Test workload critici\n(notebook, script, CLI)"]
-  R10["10. Commit & rollout\n(checkpoint & documentazione)"]
-  DONE[Fine]
-
-  %% Flusso principale
-  E1 --> I2 --> T3 --> D4 --> U5 --> M6 --> T7 --> IM8 --> TW9 --> R10 --> DONE
-
-  %% Ramo opzionale "Clean"
-  U5 --> C5 --> M6
-
-  %% Legenda (facoltativa)
-  %% I nodi tratteggiati indicano step opzionali
-  class C5 optional;
-```
-
 1. **Export & validazione** (Anaconda ancora presente)
     - **Unix:**
         `./anaconda_uninstall.sh --export-only --export-all [--from-history]`

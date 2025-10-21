@@ -41,9 +41,10 @@ FROM_HISTORY=false
 EXPORT_ONLY=false
 DEINIT_ONLY=false
 UNINSTALL_ONLY=false
-CLEAN_ONLY=false
 NO_ANACONDA_CLEAN=false
-NO_CLEAN=false
+
+# Track uninstaller success
+UNINSTALLER_RAN=false
 
 # Helpers
 log() { printf "[%s] %s\n" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$*"; }
@@ -78,11 +79,9 @@ Export:
 
 Deinit / Uninstall / Clean:
   --deinit-only             Only reverse Anaconda init for all shells, then exit
-  --uninstall-only          Only run Anaconda uninstaller (skip export/deinit/clean prompts)
-  --clean-only              Only run cleanup of directories/configs (skip other steps)
+  --uninstall-only          Only run Anaconda uninstaller + cleanup, then exit
   --anaconda-path DIR       Anaconda/Miniconda root (default: ~/anaconda3)
   --no-anaconda-clean       Do NOT offer 'anaconda-clean' pre-uninstall
-  --no-clean                Skip post-uninstall cleanup of dirs/configs
 
 Common:
   --yes                     Assume yes for prompts
@@ -106,7 +105,7 @@ validate_export() {
     local dep_count
     dep_count=$(awk '/^dependencies:/,/^[a-z]/ {if ($0 ~ /^[[:space:]]*-/) count++} END {print count+0}' "$file")
     (( dep_count > 0 )) || { warn "Export $file has no packages listed"; return 1; }
-    info "✅ Validated $file ($dep_count packages)"
+    info "✓ Validated $file ($dep_count packages)"
     return 0
 }
 
@@ -121,9 +120,7 @@ while [[ $# -gt 0 ]]; do
     --export-only) EXPORT_ONLY=true; shift ;;
     --deinit-only) DEINIT_ONLY=true; shift ;;
     --uninstall-only) UNINSTALL_ONLY=true; shift ;;
-    --clean-only) CLEAN_ONLY=true; shift ;;
     --no-anaconda-clean) NO_ANACONDA_CLEAN=true; shift ;;
-    --no-clean) NO_CLEAN=true; shift ;;
 
     --yes) ASSUME_YES=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
@@ -132,7 +129,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-$DRY_RUN && echo "🔍 DRY-RUN MODE: No changes will be made"
+$DRY_RUN && echo "🔧 DRY-RUN MODE: No changes will be made"
 
 # Resolve possible flag conflicts.
 # Stages.
@@ -147,9 +144,8 @@ ONLY_COUNT=0
 $EXPORT_ONLY && ((ONLY_COUNT++))
 $DEINIT_ONLY && ((ONLY_COUNT++))
 $UNINSTALL_ONLY && ((ONLY_COUNT++))
-$CLEAN_ONLY && ((ONLY_COUNT++))
 if (( ONLY_COUNT > 1 )); then
-  err "Conflicting flags: only one of --export-only, --deinit-only, --uninstall-only, --clean-only may be used."
+  err "Conflicting flags: only one of --export-only, --deinit-only, --uninstall-only may be used."
 fi
 # Apply *ONLY* modifiers, which are mutually exclusive and override others.
 if $EXPORT_ONLY; then
@@ -160,15 +156,10 @@ if $DEINIT_ONLY; then
 fi
 if $UNINSTALL_ONLY; then
   DO_EXPORT=false; DO_VALIDATE=false; DO_DEINIT=false
-  # clean default still true unless user also set --no-clean or --clean-only
-fi
-if $CLEAN_ONLY; then
-  DO_EXPORT=false; DO_VALIDATE=false; DO_DEINIT=false; DO_UNINSTALL=false
-  DO_CLEAN=true
+  # clean default still true unless uninstaller ran successfully
 fi
 # Respect explicit NO_*
 $NO_ANACONDA_CLEAN && :  # handled just-in-time
-$NO_CLEAN && DO_CLEAN=false
 
 # Sanity checks
 if ! command -v conda >/dev/null 2>&1; then
@@ -269,7 +260,7 @@ if $DO_VALIDATE; then
     
     Re-run this script to validate again, or proceed directly to uninstallation if you're confident."
     fi
-    info "✅ All exported environments validated."
+    info "✓ All exported environments validated."
     info "   Total: ${#EXPORTED_FILES[@]} environment(s)"
   fi
 fi
@@ -293,12 +284,67 @@ $DEINIT_ONLY && {
   exit 0
 }
 
+# Find uninstaller
+find_uninstaller() {
+    local candidates=(
+        "$ANACONDA_PATH/uninstall.sh"
+        "$HOME/anaconda3/uninstall.sh"
+        "/opt/anaconda3/uninstall.sh"
+        "$HOME/miniconda3/uninstall.sh"
+        "/opt/miniconda3/uninstall.sh"
+    )
+    for u in "${candidates[@]}"; do
+        [[ -x "$u" ]] && { echo "$u"; return 0; }
+    done
+    echo ""
+}
+
+# --uninstall-only mode
+if $UNINSTALL_ONLY; then
+    UNINSTALLER_FOUND=$(find_uninstaller)
+    
+    if [[ -n "$UNINSTALLER_FOUND" ]]; then
+        info "Detected Anaconda uninstaller at: $UNINSTALLER_FOUND"
+        if confirm "Run the official uninstaller now?"; then
+            if $DRY_RUN; then
+                dry_run_msg "Would run: $UNINSTALLER_FOUND --remove-caches --remove-config-files user --remove-user-data"
+                [[ "$UNINSTALLER_FOUND" == /opt/* ]] && warn "Admin privileges would be needed."
+            else
+                if [[ "$UNINSTALLER_FOUND" == /opt/* ]]; then
+                    warn "Admin privileges needed to uninstall!"
+                else
+                    "$UNINSTALLER_FOUND" --remove-caches --remove-config-files user --remove-user-data
+                    EXIT_CODE=$?
+                    if (( EXIT_CODE == 0 )); then
+                        UNINSTALLER_RAN=true
+                        info "Uninstaller completed successfully (exit code: 0)."
+                    else
+                        warn "Uninstaller exited with non-zero code: $EXIT_CODE"
+                        info "You may need to review the uninstall manually or run cleanup."
+                    fi
+                fi
+            fi
+        else
+            info "Skipped official uninstaller."
+        fi
+    else
+        info "No official uninstaller detected at common locations."
+    fi
+    
+    # If uninstaller ran successfully, skip cleanup and exit
+    if $UNINSTALLER_RAN; then
+        info "--uninstall-only complete."
+        exit 0
+    fi
+    # Otherwise, proceed to cleanup
+fi
+
 # Final confirmation before destructive operations
 if ($DO_UNINSTALL || $DO_CLEAN) && ! $DRY_RUN; then
     echo ""
-    echo "════════════════════════════════════════════════════════════"
+    echo "─────────────────────────────────────────────────────────────"
     echo "  ⚠️  POINT OF NO RETURN"
-    echo "════════════════════════════════════════════════════════════"
+    echo "─────────────────────────────────────────────────────────────"
     echo "The following steps will REMOVE Anaconda from your system."
     echo "Exported environments are in: $EXPORT_DIR"
     echo ""
@@ -309,7 +355,7 @@ if ($DO_UNINSTALL || $DO_CLEAN) && ! $DRY_RUN; then
 fi
 
 # Optional anaconda-clean
-if command -v conda >/dev/null 2>&1; then
+if ! $NO_ANACONDA_CLEAN && command -v conda >/dev/null 2>&1 && $DO_UNINSTALL; then
     info "Anaconda/Miniconda detected. Preparing cleanup via anaconda-clean."
     if confirm "Do you want to run 'anaconda-clean' (removes configs and caches) before uninstalling?"; then
         if $DRY_RUN; then
@@ -324,7 +370,7 @@ if command -v conda >/dev/null 2>&1; then
     else
         info "Skipping anaconda-clean"
     fi
-else
+elif ! $NO_ANACONDA_CLEAN && ! command -v conda >/dev/null 2>&1 && $DO_UNINSTALL; then
     warn "\`conda\` not found; skipping anaconda-clean step"
 fi
 
@@ -344,69 +390,147 @@ fi
 
 # Uninstall
 if $DO_UNINSTALL; then
-# Modern Anaconda installations ship with an automatic uninstaller. 
-# Look for it. (respect --anaconda-path)
-  UNINSTALLERS=(
-    "$ANACONDA_PATH/uninstall.sh"
-    "$HOME/anaconda3/uninstall.sh" "/opt/anaconda3/uninstall.sh"
-    "$HOME/miniconda3/uninstall.sh" "/opt/miniconda3/uninstall.sh"
-  )
-  UNINSTALLER_FOUND=""
-  for u in "${UNINSTALLERS[@]}"; do [[ -x "$u" ]] && { UNINSTALLER_FOUND="$u"; break; }; done
-
-  if [[ -n "$UNINSTALLER_FOUND" ]]; then
-    info "Detected Anaconda uninstaller at: $UNINSTALLER_FOUND"
-    if confirm "Run the official uninstaller now?"; then
-      if $DRY_RUN; then
-        dry_run_msg "Would run: $UNINSTALLER_FOUND --remove-caches --remove-config-files user --remove-user-data"
-        [[ "$UNINSTALLER_FOUND" == /opt/* ]] && warn "Admin privileges would be needed."
-      else
-        if [[ "$UNINSTALLER_FOUND" == /opt/* ]]; then
-          warn "Admin privileges needed to uninstall!"
+    UNINSTALLER_FOUND=$(find_uninstaller)
+    
+    if [[ -n "$UNINSTALLER_FOUND" ]]; then
+        info "Detected Anaconda uninstaller at: $UNINSTALLER_FOUND"
+        if confirm "Run the official uninstaller now?"; then
+            if $DRY_RUN; then
+                dry_run_msg "Would run: $UNINSTALLER_FOUND --remove-caches --remove-config-files user --remove-user-data"
+                [[ "$UNINSTALLER_FOUND" == /opt/* ]] && warn "Admin privileges would be needed."
+            else
+                if [[ "$UNINSTALLER_FOUND" == /opt/* ]]; then
+                    warn "Admin privileges needed to uninstall!"
+                else
+                    "$UNINSTALLER_FOUND" --remove-caches --remove-config-files user --remove-user-data
+                    EXIT_CODE=$?
+                    if (( EXIT_CODE == 0 )); then
+                        UNINSTALLER_RAN=true
+                        info "Uninstaller completed successfully (exit code: 0)."
+                    else
+                        warn "Uninstaller exited with non-zero code: $EXIT_CODE"
+                        info "You may need to review the uninstall manually or run cleanup."
+                    fi
+                fi
+            fi
         else
-          "$UNINSTALLER_FOUND" --remove-caches --remove-config-files user --remove-user-data
+            info "Skipped official uninstaller."
         fi
-        info "Uninstaller completed. You may need to restart your terminal."
-      fi
     else
-      info "Skipped official uninstaller."
+        info "No official uninstaller detected; will proceed with manual cleanup (next section)."
     fi
-  else
-    info "No official uninstaller detected; will proceed with manual cleanup (next section)."
-  fi
 fi
 
-# Clean dirs / configs
-if $DO_CLEAN; then
-  if $NO_CLEAN; then
-    info "Skipping clean due to --no-clean."
-  else
-    if confirm "Remove typical Anaconda directories and configs ($ANACONDA_PATH, ~/miniconda3, ~/.conda, ~/.continuum, ~/.condarc)?"; then
-      for d in "$ANACONDA_PATH" "$HOME/miniconda3" "$HOME/.conda" "$HOME/.continuum"; do
-        [[ -e "$d" ]] || continue
-        if confirm "Delete $d ?"; then
-          $DRY_RUN && dry_run_msg "Would remove: $d" || { info "Removing $d"; rm -rf "$d"; }
-        else
-          info "Kept $d"
-        fi
-      done
-      if [[ -f "$HOME/.condarc" ]]; then
-        if confirm "Delete $HOME/.condarc ?"; then
-          $DRY_RUN && dry_run_msg "Would remove: $HOME/.condarc" || { rm -f "$HOME/.condarc"; info "Removed .condarc"; }
-        else
-          info "Kept .condarc"
-        fi
-      fi
-    else
-      info "Skipped directory cleanup."
+# Clean dirs / configs - ONLY if uninstaller didn't run
+if $DO_CLEAN && ! $UNINSTALLER_RAN; then
+    info "Offering to clean up Anaconda directories and configs..."
+    
+    # Build array of existing items
+    declare -a CLEANUP_ITEMS
+    declare -a CLEANUP_PATHS
+    declare -a CLEANUP_DESCS
+    
+    local idx=0
+    
+    # Check each item and add if it exists
+    if [[ -e "$ANACONDA_PATH" ]]; then
+        CLEANUP_ITEMS[$idx]="Anaconda root"
+        CLEANUP_PATHS[$idx]="$ANACONDA_PATH"
+        CLEANUP_DESCS[$idx]="Installation directory"
+        ((idx++))
     fi
-  fi
+    if [[ -e "$HOME/miniconda3" ]]; then
+        CLEANUP_ITEMS[$idx]="~/miniconda3"
+        CLEANUP_PATHS[$idx]="$HOME/miniconda3"
+        CLEANUP_DESCS[$idx]="Miniconda user dir"
+        ((idx++))
+    fi
+    if [[ -e "$HOME/.conda" ]]; then
+        CLEANUP_ITEMS[$idx]="~/.conda"
+        CLEANUP_PATHS[$idx]="$HOME/.conda"
+        CLEANUP_DESCS[$idx]="Conda config directory"
+        ((idx++))
+    fi
+    if [[ -e "$HOME/.continuum" ]]; then
+        CLEANUP_ITEMS[$idx]="~/.continuum"
+        CLEANUP_PATHS[$idx]="$HOME/.continuum"
+        CLEANUP_DESCS[$idx]="Legacy Continuum config"
+        ((idx++))
+    fi
+    if [[ -e "$HOME/.condarc" ]]; then
+        CLEANUP_ITEMS[$idx]="~/.condarc"
+        CLEANUP_PATHS[$idx]="$HOME/.condarc"
+        CLEANUP_DESCS[$idx]="Conda config file"
+        ((idx++))
+    fi
+    
+    if (( idx == 0 )); then
+        info "No Anaconda directories or configs found to clean."
+    else
+        echo ""
+        echo "Found the following Anaconda-related directories and configs:"
+        echo ""
+        for i in "${!CLEANUP_ITEMS[@]}"; do
+            printf "%d) %-30s (%s)\n" "$((i+1))" "${CLEANUP_ITEMS[$i]}" "${CLEANUP_DESCS[$i]}"
+            echo "   Path: ${CLEANUP_PATHS[$i]}"
+        done
+        echo ""
+        echo "a) Remove all"
+        echo "n) Remove none"
+        echo ""
+        read -r -p "Select items to remove (e.g. '1 3 5' or 'a' or 'n'): " selection
+        
+        ITEMS_TO_REMOVE=()
+        
+        if [[ "$selection" == "a" ]]; then
+            ITEMS_TO_REMOVE=("${CLEANUP_PATHS[@]}")
+        elif [[ "$selection" != "n" ]]; then
+            for idx in $selection; do
+                if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx >= 1 && idx <= ${#CLEANUP_PATHS[@]} )); then
+                    ITEMS_TO_REMOVE+=("${CLEANUP_PATHS[$((idx-1))]}")
+                else
+                    warn "Ignoring invalid selection: $idx"
+                fi
+            done
+        fi
+        
+        if (( ${#ITEMS_TO_REMOVE[@]} > 0 )); then
+            echo ""
+            echo "─────────────────────────────────────────────────────────────"
+            echo "  FINAL CONFIRMATION"
+            echo "─────────────────────────────────────────────────────────────"
+            echo "About to remove:"
+            for item in "${ITEMS_TO_REMOVE[@]}"; do
+                echo "  - $item"
+            done
+            echo ""
+            
+            if confirm "Are you absolutely sure? This cannot be undone."; then
+                for item in "${ITEMS_TO_REMOVE[@]}"; do
+                    if [[ -e "$item" ]]; then
+                        if $DRY_RUN; then
+                            dry_run_msg "Would remove: $item"
+                        else
+                            info "Removing $item"
+                            rm -rf "$item"
+                        fi
+                    fi
+                done
+            else
+                info "Cleanup cancelled."
+            fi
+        else
+            info "No items selected for removal."
+        fi
+    fi
+elif $DO_CLEAN && $UNINSTALLER_RAN; then
+    info "Official uninstaller ran successfully. Skipping directory cleanup."
 fi
 
 echo ""
-echo "✅ Anaconda removal procedure complete."
+echo "✓ Anaconda removal procedure complete."
 if $DRY_RUN; then
-    echo "🔍 This was a dry-run. No actual changes were made."
+    echo "🔧 This was a dry-run. No actual changes were made."
     echo "   Run without --dry-run to perform the actual uninstallation."
 else
     echo "⚠️  Restart shell before installing Miniforge."

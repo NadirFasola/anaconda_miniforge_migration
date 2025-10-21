@@ -27,13 +27,7 @@ param(
 
     [Parameter(ParameterSetName = 'ExportOnly')]    [switch] $ExportOnly,
     [Parameter(ParameterSetName = 'DeinitOnly')]    [switch] $DeinitOnly,
-    [Parameter(ParameterSetName = 'UninstallOnly')] [switch] $UninstallOnly,
-    [Parameter(ParameterSetName = 'CleanOnly')]     [switch] $CleanOnly,
-
-    [Parameter(ParameterSetName = 'Default')]       [switch] $NoAnacondaClean,
-    [Parameter(ParameterSetName = 'UninstallOnly')] [switch] $NoAnacondaClean_OnlyMode,
-    [Parameter(ParameterSetName = 'Default')]       [switch] $NoClean,
-    [Parameter(ParameterSetName = 'UninstallOnly')] [switch] $NoClean_OnlyMode
+    [Parameter(ParameterSetName = 'UninstallOnly')] [switch] $UninstallOnly
 )
 
 Set-StrictMode -Version Latest
@@ -64,14 +58,13 @@ if (-not $AnacondaPath -and $env:ANACONDA_PATH) { $AnacondaPath = $env:ANACONDA_
 $IsElevated = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).
 IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-if ($IsElevated -and ($PSCmdlet.ParameterSetName -in 'Default', 'UninstallOnly', 'CleanOnly')) {
+if ($IsElevated -and ($PSCmdlet.ParameterSetName -in 'Default')) {
     Warn "Script is running with Administrator privileges."
     Warn "For safety, uninstallation will not proceed while elevated."
-    if ($UninstallOnly -or $PSCmdlet.ParameterSetName -in 'Default', 'CleanOnly') { return }
+    return
 }
 
-# Resolve possible flag conflicts.
-# Stages.
+# Stages
 $DO_EXPORT = $true
 $DO_VALIDATE = $true
 $DO_DEINIT = $true
@@ -80,19 +73,11 @@ $DO_CLEAN = $true
 
 # ONLY flags are mutually exclusive
 switch ($PSCmdlet.ParameterSetName) {
-    'ExportOnly' { $DO_DEINIT = $false; $DO_UNINSTALL = $false; $DO_CLEAN = $false }
-    'DeinitOnly' { $DO_EXPORT = $false; $DO_VALIDATE = $false; $DO_UNINSTALL = $false; $DO_CLEAN = $false }
-    'UninstallOnly' { $DO_EXPORT = $false; $DO_VALIDATE = $false; $DO_DEINIT = $false }
-    'CleanOnly' { $DO_EXPORT = $false; $DO_VALIDATE = $false; $DO_DEINIT = $false; $DO_UNINSTALL = $false; $DO_CLEAN = $true }
+    'ExportOnly' { $DO_EXPORT = $true; $DO_VALIDATE = $false; $DO_DEINIT = $false; $DO_UNINSTALL = $false; $DO_CLEAN = $false }
+    'DeinitOnly' { $DO_EXPORT = $false; $DO_VALIDATE = $false; $DO_DEINIT = $true; $DO_UNINSTALL = $false; $DO_CLEAN = $false }
+    'UninstallOnly' { $DO_EXPORT = $false; $DO_VALIDATE = $false; $DO_DEINIT = $false; $DO_UNINSTALL = $true; $DO_CLEAN = $true }
     default { }
 }
-
-# Respect explicit NO_*
-if ($PSCmdlet.ParameterSetName -eq 'UninstallOnly') {
-    if ($NoAnacondaClean_OnlyMode) { $NoAnacondaClean = $true }
-    if ($NoClean_OnlyMode) { $NoClean = $true }
-}
-if ($NoClean) { $DO_CLEAN = $false }
 
 # conda candidate roots
 function Test-CondaAvailable {
@@ -271,8 +256,59 @@ if ($DeinitOnly) {
     return
 }
 
+# --uninstall-only short-circuit
+if ($UninstallOnly) {
+    if ($IsElevated) { Fail "Running elevated; refusing to uninstall. Launch from a normal user shell." }
+    
+    $roots = @($AnacondaPath) + ($CandidateRoots | Where-Object { $_ -ne $AnacondaPath })
+    $uninstaller = Find-UninstallerExe $roots
+
+    if ($uninstaller) {
+        Info "Detected Anaconda/Miniconda uninstaller at: $uninstaller"
+        if (Confirm-Action "Run the official uninstaller now?") {
+            if ($PSCmdlet.ShouldProcess($uninstaller, "Run uninstaller")) {
+                $a = @("/S", "/RemoveCaches=1", "/RemoveConfigFiles=user", "/RemoveUserData=1")
+                Start-Process -FilePath $uninstaller -ArgumentList $a -Wait -PassThru | Out-Null
+                $UninstallerRan = $true
+                Info "Uninstaller completed successfully."
+            }
+        }
+        else {
+            Info "Skipped official uninstaller."
+        }
+    }
+    else {
+        Info "No official uninstaller detected at common locations."
+    }
+    
+    # Proceed to cleanup if uninstaller didn't run
+    if (-not $UninstallerRan) {
+        # Reuse cleanup logic below
+        $DO_UNINSTALL = $false
+        $DO_DEINIT = $false
+    }
+    else {
+        Info "--uninstall-only complete."
+        return
+    }
+}
+
+# Find uninstaller
+function Find-UninstallerExe([string[]]$Roots) {
+    $names = @('Uninstall-Anaconda3.exe', 'Uninstall-Miniconda3.exe', 'Uninstall.exe', 'Uninstall-Anaconda.exe', 'uninstall.exe')
+    foreach ($r in $Roots) {
+        foreach ($n in $names) {
+            $p = Join-Path $r $n
+            if (Test-Path $p) { return $p }
+        }
+    }
+    return $null
+}
+
+$UninstallerRan = $false
+
 # Final confirmation before destructive operations
-if (($DO_UNINSTALL -or $DO_CLEAN) -and -not $WhatIfPreference) {
+if (($DO_UNINSTALL -or $DO_DEINIT) -and -not $WhatIfPreference) {
     Write-Host ""
     Write-Host "============================================================"
     Write-Host "  POINT OF NO RETURN"
@@ -283,7 +319,7 @@ if (($DO_UNINSTALL -or $DO_CLEAN) -and -not $WhatIfPreference) {
 }
 
 # Optional anaconda-clean
-if ($DO_UNINSTALL -and -not $NoAnacondaClean -and (Test-CondaAvailable)) {
+if ($DO_UNINSTALL -and (Test-CondaAvailable)) {
     Info "Preparing cleanup via anaconda-clean."
     if (Confirm-Action "Run 'anaconda-clean' before uninstalling?") {
         if ($PSCmdlet.ShouldProcess("base env", "conda install -n base -y anaconda-clean")) {
@@ -322,17 +358,6 @@ if ($DO_DEINIT) {
 }
 
 # Uninstall
-function Find-UninstallerExe([string[]]$Roots) {
-    $names = @('Uninstall-Anaconda3.exe', 'Uninstall-Miniconda3.exe', 'Uninstall.exe', 'Uninstall-Anaconda.exe', 'uninstall.exe')
-    foreach ($r in $Roots) {
-        foreach ($n in $names) {
-            $p = Join-Path $r $n
-            if (Test-Path $p) { return $p }
-        }
-    }
-    return $null
-}
-
 if ($DO_UNINSTALL) {
     if ($IsElevated) { Fail "Running elevated; refusing to uninstall. Launch from a normal user shell." }
 
@@ -343,8 +368,16 @@ if ($DO_UNINSTALL) {
         Info "Detected Anaconda/Miniconda uninstaller at: $uninstaller"
         if (Confirm-Action "Run the official uninstaller now?") {
             if ($PSCmdlet.ShouldProcess($uninstaller, "Run uninstaller")) {
-                & $uninstaller
-                Info "Uninstaller completed (or exited). You may need to restart your terminal."
+                $a = @("/S", "/RemoveCaches=1", "/RemoveConfigFiles=user", "/RemoveUserData=1")
+                $process = Start-Process -FilePath $uninstaller -ArgumentList $a -Wait -PassThru
+                if ($process.ExitCode -eq 0) {
+                    $UninstallerRan = $true
+                    Info "Uninstaller completed successfully (exit code: 0)."
+                }
+                else {
+                    Warn "Uninstaller exited with non-zero code: $($process.ExitCode)"
+                    Info "You may need to review the uninstall manually or run cleanup."
+                }
             }
         }
         else {
@@ -356,40 +389,108 @@ if ($DO_UNINSTALL) {
     }
 }
 
-# Clean dirs / configs
-if ($DO_CLEAN) {
-    if ($NoClean) {
-        Info "Skipping clean due to -NoClean."
+# Clean dirs / configs - ONLY if uninstaller didn't run
+if ($DO_CLEAN -and -not $UninstallerRan) {
+    Info "Offering to clean up Anaconda directories and configs..."
+    
+    # Define all available cleanup items
+    $cleanupItems = @(
+        @{ Name = "Anaconda root"; Path = $AnacondaPath; Description = "Installation directory" },
+        @{ Name = "~/Miniconda3"; Path = (Join-Path $env:USERPROFILE 'miniconda3'); Description = "Miniconda user dir" },
+        @{ Name = "~/miniconda3"; Path = (Join-Path $env:USERPROFILE 'miniconda3'); Description = "Miniconda user dir" },
+        @{ Name = "~/anaconda3"; Path = (Join-Path $env:USERPROFILE 'miniconda3'); Description = "Miniconda user dir" },
+        @{ Name = "~/Anaconda3"; Path = (Join-Path $env:USERPROFILE 'miniconda3'); Description = "Miniconda user dir" },
+        @{ Name = "%LOCALAPPDATA%\anaconda3"; Path = (Join-Path $env:LOCALAPPDATA 'anaconda3'); Description = "AppData Anaconda" },
+        @{ Name = "%LOCALAPPDATA%\Anaconda3"; Path = (Join-Path $env:LOCALAPPDATA 'anaconda3'); Description = "AppData Anaconda" },
+        @{ Name = "%LOCALAPPDATA%\miniconda3"; Path = (Join-Path $env:LOCALAPPDATA 'miniconda3'); Description = "AppData Miniconda" },
+        @{ Name = "%LOCALAPPDATA%\Miniconda3"; Path = (Join-Path $env:LOCALAPPDATA 'miniconda3'); Description = "AppData Miniconda" },
+        @{ Name = "~/.conda"; Path = (Join-Path $env:USERPROFILE '.conda'); Description = "Conda config directory" },
+        @{ Name = "~/.continuum"; Path = (Join-Path $env:USERPROFILE '.continuum'); Description = "Legacy Continuum config" },
+        @{ Name = "~/.condarc"; Path = (Join-Path $env:USERPROFILE '.condarc'); Description = "Conda config file"; IsFile = $true }
+    )
+    
+    # Filter to only items that exist
+    $existingItems = $cleanupItems | Where-Object { Test-Path $_.Path } | Sort-Object -Property Path -Unique
+    
+    if (-not $existingItems -or $existingItems.Count -eq 0) {
+        Info "No Anaconda directories or configs found to clean."
     }
     else {
-        $dirs = @(
-            $AnacondaPath,
-            (Join-Path $env:USERPROFILE  'miniconda3'),
-            (Join-Path $env:USERPROFILE  '.conda'),
-            (Join-Path $env:USERPROFILE  '.continuum'),
-            (Join-Path $env:LOCALAPPDATA 'anaconda3'),
-            (Join-Path $env:LOCALAPPDATA 'miniconda3')
-        )
-        $condarc = Join-Path $env:USERPROFILE ".condarc"
-        $msg = "Remove typical Anaconda directories and configs?`n  " + (($dirs + $condarc) -join "`n  ")
-        if (Confirm-Action $msg) {
-            foreach ($d in $dirs) {
-                if (Test-Path $d) {
-                    if ($PSCmdlet.ShouldProcess($d, "Remove-Item -Recurse -Force")) {
-                        try { Remove-Item -Recurse -Force -LiteralPath $d } catch { Warn "Failed to remove ${d}: $($_.Exception.Message)" }
+        Write-Host ""
+        Write-Host "Found the following Anaconda-related directories and configs:"
+        Write-Host ""
+        for ($i = 0; $i -lt $existingItems.Count; $i++) {
+            $item = $existingItems[$i]
+            Write-Host ("{0}) {1,-30} ({2})" -f ($i + 1), $item.Name, $item.Description)
+            Write-Host ("   Path: {0}" -f $item.Path)
+        }
+        Write-Host ""
+        Write-Host "a) Remove all"
+        Write-Host "n) Remove none"
+        Write-Host ""
+        $selection = Read-Host "Select items to remove (e.g. '1 3 5' or 'a' or 'n')"
+        
+        $itemsToRemove = @()
+        
+        if ($selection -eq 'a') {
+            $itemsToRemove = $existingItems
+        }
+        elseif ($selection -ne 'n') {
+            $indices = $selection -split '\s+' | Where-Object { $_ -match '^\d+$' }
+            foreach ($idx in $indices) {
+                $n = [int]$idx
+                if ($n -ge 1 -and $n -le $existingItems.Count) {
+                    $itemsToRemove += $existingItems[$n - 1]
+                }
+                else {
+                    Warn "Ignoring invalid selection: $idx"
+                }
+            }
+        }
+        
+        if ($itemsToRemove.Count -gt 0) {
+            Write-Host ""
+            Write-Host "============================================================"
+            Write-Host "  FINAL CONFIRMATION"
+            Write-Host "============================================================"
+            Write-Host "About to remove:"
+            foreach ($item in $itemsToRemove) {
+                Write-Host "  - $($item.Name)"
+            }
+            Write-Host ""
+            
+            if (Confirm-Action "Are you absolutely sure? This cannot be undone.") {
+                foreach ($item in $itemsToRemove) {
+                    if (Test-Path $item.Path) {
+                        if ($PSCmdlet.ShouldProcess($item.Path, "Remove-Item -Recurse -Force")) {
+                            try {
+                                if ($item.IsFile) {
+                                    Remove-Item -Force -LiteralPath $item.Path
+                                    Info "Removed $($item.Name)"
+                                }
+                                else {
+                                    Remove-Item -Recurse -Force -LiteralPath $item.Path
+                                    Info "Removed $($item.Name)"
+                                }
+                            }
+                            catch {
+                                Warn "Failed to remove $($item.Name): $($_.Exception.Message)"
+                            }
+                        }
                     }
                 }
             }
-            if (Test-Path $condarc) {
-                if ($PSCmdlet.ShouldProcess($condarc, "Remove-Item -Force")) {
-                    try { Remove-Item -Force -LiteralPath $condarc; Info "Removed .condarc" } catch { Warn "Failed to remove .condarc: $($_.Exception.Message)" }
-                }
+            else {
+                Info "Cleanup cancelled."
             }
         }
         else {
-            Info "Skipped directory cleanup."
+            Info "No items selected for removal."
         }
     }
+}
+elseif ($DO_CLEAN -and $UninstallerRan) {
+    Info "Official uninstaller ran successfully. Skipping directory cleanup."
 }
 
 Write-Host ""

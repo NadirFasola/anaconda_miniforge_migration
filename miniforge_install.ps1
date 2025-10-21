@@ -17,7 +17,7 @@
     DefaultParameterSetName = 'Default'
 )]
 param(
-    [Parameter()] [string] $MiniforgePrefix = $(Join-Path $env:USERPROFILE 'miniforge3'),
+    [Parameter()] [string] $MiniforgePrefix = $(Join-Path $env:LOCALAPPDATA 'miniforge3'),
     [Parameter()] [string] $ExportDir = $(Join-Path $env:USERPROFILE 'conda_migration_exports'),
 
     [Parameter(ParameterSetName = 'Default')] [switch] $NoInstall,
@@ -83,7 +83,7 @@ function Get-MambaPath([string]$prefix) {
 
 function Test-ValidYaml([string]$Path) {
     if (-not (Test-Path $Path)) { Warn "YAML not found: $Path"; return $false }
-    $content = Get-Content -Path $Path -ErrorAction SilentlyContinue
+    $content = @(Get-Content -Path $Path -ErrorAction SilentlyContinue)
     if (-not $content -or $content.Count -eq 0) { Warn "Empty YAML: $Path"; return $false }
     if (-not ($content | Select-String -SimpleMatch 'name:')) { Warn "Missing 'name:' in $(Split-Path $Path -Leaf)"; return $false }
     if (-not ($content | Select-String -SimpleMatch 'dependencies:')) { Warn "Missing 'dependencies:' in $(Split-Path $Path -Leaf)"; return $false }
@@ -216,9 +216,9 @@ if ($DO_INSTALL) {
     # NSIS installer silent options: /S and /D=...
     # Keep user-scope: /InstallationType=JustMe, no PATH changes (/AddToPath=0)
     if ($PSCmdlet.ShouldProcess($MiniforgePrefix, "Run Miniforge installer (silent)")) {
-        $a = @("/InstallationType=JustMe", "/AddToPath=0", "/RegisterPython=0", "/S", ("/D=" + $MiniforgePrefix))
+        $a = @("/InstallationType=JustMe", "/RegisterPython=0", "/S", ("/D=${MiniforgePrefix}"))
         try {
-            & $tmp @a
+            Start-Process -FilePath $tmp -ArgumentList $a -Wait
             Info "Installer finished (exit code $LASTEXITCODE)."
         }
         catch {
@@ -268,7 +268,7 @@ if ($DO_IMPORT) {
         else { Fail "Miniforge not present at prefix. Cannot import. ($MiniforgePrefix)" }
     }
 
-    $files = Get-ChildItem -Path $ExportDir -Filter *.yml -ErrorAction SilentlyContinue
+    $files = @(Get-ChildItem -Path $ExportDir -Filter *.yml -ErrorAction SilentlyContinue)
     if (-not $files) {
         Warn "No exported YAML files found in $ExportDir"
         Info "If your exports are elsewhere, set `\$env:EXPORT_DIR` and re-run."
