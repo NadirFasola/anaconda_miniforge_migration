@@ -313,6 +313,14 @@ Per semplificare il processo di migrazione, sono disponibili **quattro script** 
 
 Sequenza pensata per minimizzare i rischi e mantenere opzioni di rollback. È perfettamente allineata agli script.
 
+```mermaid
+graph TD;
+    A-->B;
+    A-->C;
+    B-->D;
+    C-->D;
+```
+
 1. **Export & validazione** (Anaconda ancora presente)
     - **Unix:**
         `./anaconda_uninstall.sh --export-only --export-all [--from-history]`
