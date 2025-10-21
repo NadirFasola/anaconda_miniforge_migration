@@ -319,17 +319,17 @@ flowchart TB
   classDef optional stroke-dasharray: 5 5, color:#333;
 
   %% Nodi
-  E1[1. Esporta & valida\nanaconda_uninstall: --export-only]
-  I2[2. Installa Miniforge (senza init)\nminiforge_install: --no-init]
-  T3[3. Test installazione\n(conda --version per percorso completo)]
-  D4[4. De-inizializza Anaconda\nanaconda_uninstall: --deinit-only]
-  U5[5. Disinstalla Anaconda\nanaconda_uninstall: --uninstall-only]
+  E1["1. Esporta & valida\nanaconda_uninstall: --export-only"]
+  I2["2. Installa Miniforge (senza init)\nminiforge_install: --no-init"]
+  T3["3. Test installazione\n(conda --version per percorso completo)"]
+  D4["4. De-inizializza Anaconda\nanaconda_uninstall: --deinit-only"]
+  U5["5. Disinstalla Anaconda\nanaconda_uninstall: --uninstall-only"]
   C5["Opz.: Clean leftovers\nanaconda_uninstall: --clean-only"]
-  M6[6. Inizializza Miniforge\nminiforge_install: --init-only]
-  T7[7. Test init\n(conda info / env list)]
-  IM8[8. Import ambienti\nminiforge_install: --import-only]
-  TW9[9. Test workload critici\n(notebook, script, CLI)]
-  R10[10. Commit & rollout\n(checkpoint & documentazione)]
+  M6["6. Inizializza Miniforge\nminiforge_install: --init-only"]
+  T7["7. Test init\n(conda info / env list)"]
+  IM8["8. Import ambienti\nminiforge_install: --import-only"]
+  TW9["9. Test workload critici\n(notebook, script, CLI)"]
+  R10["10. Commit & rollout\n(checkpoint & documentazione)"]
   DONE[Fine]
 
   %% Flusso principale
