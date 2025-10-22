@@ -22,8 +22,8 @@ param(
     [Parameter()] [switch] $Yes,
     [Parameter()] [switch] $DryRun,
 
-    [Parameter(ParameterSetName = 'Default')] [switch] $ExportAll,
-    [Parameter(ParameterSetName = 'Default')] [switch] $FromHistory,
+    [Parameter(ParameterSetName = 'Default')][Parameter(ParameterSetName = 'ExportOnly')] [switch] $ExportAll,
+    [Parameter(ParameterSetName = 'Default')][Parameter(ParameterSetName = 'ExportOnly')] [switch] $FromHistory,
 
     [Parameter(ParameterSetName = 'ExportOnly')]    [switch] $ExportOnly,
     [Parameter(ParameterSetName = 'DeinitOnly')]    [switch] $DeinitOnly,
@@ -144,7 +144,7 @@ function Export-CondaEnv([string]$Name) {
         $tmp = conda @a 2>$null
         if (-not $tmp) { Warn "Export produced no content for $Name"; $script:ExportInProgress = $false; return }
         $filtered = $tmp | Where-Object { $_ -notmatch '^\s*prefix:\s' }
-        $filtered | Set-Content -NoNewline -Path $out -Encoding UTF8
+        $filtered | Set-Content -Path $out -Encoding UTF8
         Info "Exported $Name -> $out"
     }
     $script:ExportInProgress = $false
@@ -171,6 +171,18 @@ $script:cleanup = {
     }
 }
 Register-EngineEvent PowerShell.Exiting -Action $script:cleanup | Out-Null
+
+# Find uninstaller
+function Find-UninstallerExe([string[]]$Roots) {
+    $names = @('Uninstall-Anaconda3.exe', 'Uninstall-Miniconda3.exe', 'Uninstall.exe', 'Uninstall-Anaconda.exe', 'uninstall.exe')
+    foreach ($r in $Roots) {
+        foreach ($n in $names) {
+            $p = Join-Path $r $n
+            if (Test-Path $p) { return $p }
+        }
+    }
+    return $null
+}
 
 if ($DO_EXPORT) {
     if (-not (Test-CondaAvailable)) {
@@ -267,7 +279,7 @@ if ($UninstallOnly) {
         Info "Detected Anaconda/Miniconda uninstaller at: $uninstaller"
         if (Confirm-Action "Run the official uninstaller now?") {
             if ($PSCmdlet.ShouldProcess($uninstaller, "Run uninstaller")) {
-                $a = @("/S", "/RemoveCaches=1", "/RemoveConfigFiles=user", "/RemoveUserData=1")
+                $a = @("/S", "/RemoveCaches=1", "/RemoveConfigFiles=user", "/RemoveUserData=0")
                 Start-Process -FilePath $uninstaller -ArgumentList $a -Wait -PassThru | Out-Null
                 $UninstallerRan = $true
                 Info "Uninstaller completed successfully."
@@ -291,18 +303,6 @@ if ($UninstallOnly) {
         Info "--uninstall-only complete."
         return
     }
-}
-
-# Find uninstaller
-function Find-UninstallerExe([string[]]$Roots) {
-    $names = @('Uninstall-Anaconda3.exe', 'Uninstall-Miniconda3.exe', 'Uninstall.exe', 'Uninstall-Anaconda.exe', 'uninstall.exe')
-    foreach ($r in $Roots) {
-        foreach ($n in $names) {
-            $p = Join-Path $r $n
-            if (Test-Path $p) { return $p }
-        }
-    }
-    return $null
 }
 
 $UninstallerRan = $false

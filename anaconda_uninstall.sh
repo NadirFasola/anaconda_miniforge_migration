@@ -307,7 +307,7 @@ if $UNINSTALL_ONLY; then
         info "Detected Anaconda uninstaller at: $UNINSTALLER_FOUND"
         if confirm "Run the official uninstaller now?"; then
             if $DRY_RUN; then
-                dry_run_msg "Would run: $UNINSTALLER_FOUND --remove-caches --remove-config-files user --remove-user-data"
+                dry_run_msg "Would run: $UNINSTALLER_FOUND --remove-caches --remove-config-files user"
                 [[ "$UNINSTALLER_FOUND" == /opt/* ]] && warn "Admin privileges would be needed."
             else
                 if [[ "$UNINSTALLER_FOUND" == /opt/* ]]; then

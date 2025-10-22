@@ -176,7 +176,7 @@ if ($InitOnly) {
     }
     $mamba = Get-MambaPath $MiniforgePrefix
     if ($mamba -and $PSCmdlet.ShouldProcess("Shell init", "mamba shell init (PowerShell)")) {
-        & $mamba shell init --shell powershell 2>$null | Out-Null
+        & cmd /c "echo . | `"$mamba`" shell init --shell powershell --log-level 4" 2>$null | Out-Null
     }
     if ($TestInit) {
         # Simple check: profile contains "conda initialize"
@@ -255,7 +255,7 @@ if ($DO_INIT) {
 
     $mamba = Get-MambaPath $MiniforgePrefix
     if ($mamba -and $PSCmdlet.ShouldProcess("Shell init", "mamba shell init (PowerShell)")) {
-        & $mamba shell init --shell powershell 2>$null | Out-Null
+        & cmd /c "echo . | `"$mamba`" shell init --shell powershell --log-level 4" 2>$null | Out-Null
     }
 }
 
