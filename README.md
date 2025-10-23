@@ -354,9 +354,9 @@ Sequenza pensata per minimizzare i rischi e mantenere opzioni di rollback.
 2. **Installa Miniforge — senza init**
 	Installa in **prefix utente**; non aggiungere al PATH.
     - **Unix:** 
-	    `<path to script>/miniforge_install.sh --no-init [--miniforge-prefix <DIR>]`
+	    `<path to script>/miniforge_install.sh --install-only [--miniforge-prefix <DIR>]`
     - **Windows:** 
-	    `<path to script>\miniforge_install.ps1 -NoInit [-MiniforgePrefix <DIR>]`  
+	    `<path to script>\miniforge_install.ps1 -InstallOnly [-MiniforgePrefix <DIR>]`  
 3. **Test d’installazione (senza init)**
 	- **Unix:**
 		`<miniforge prefix>/bin/conda --version`

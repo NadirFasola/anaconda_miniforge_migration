@@ -17,7 +17,7 @@
     DefaultParameterSetName = 'Default'
 )]
 param(
-    [Parameter()] [string] $ExportDir = (Join-Path -Path (Get-Location) -ChildPath "conda-exports"),
+    [Parameter()] [string] $ExportDir = (Join-Path -Path (Get-Location) -ChildPath "conda_migration_exports"),
     [Parameter()] [switch] $FromHistory,
     [Parameter()] [string] $AnacondaPath,
     
@@ -112,29 +112,25 @@ function Get-AnacondaCleanupItems {
     $lapp = $env:LOCALAPPDATA
 
     $items = @(
-        @{ Name = ".conda"; Path = Join-Path $home ".conda"; Description = "User conda data (pkgs, envs pointers)" },
-        @{ Name = ".continuum"; Path = Join-Path $home ".continuum"; Description = "Continuum configs" },
-        @{ Name = ".anaconda_backup"; Path = Join-Path $home ".anaconda_backup"; Description = "anaconda-clean backup dir (if present)" },
-        @{ Name = ".condarc"; Path = Join-Path $home ".condarc"; Description = "User conda config" },
-        @{ Name = "Anaconda3"; Path = Join-Path $home "anaconda3"; Description = "Local Anaconda install - home dir" },
-        @{ Name = "Anaconda3"; Path = Join-Path $home "Anaconda3"; Description = "Local Anaconda install (capitalized) - home dir" },
-        @{ Name = "Miniconda3"; Path = Join-Path $home "miniconda3"; Description = "Local Miniconda install - home dir" },
-        @{ Name = "Miniconda3"; Path = Join-Path $home "Miniconda3"; Description = "Local Miniconda install (capitalized) - home dir" }
+        @{ Name = ".conda"; Path = Join-Path $env:USERPROFILE ".conda"; Description = "User conda data (pkgs, envs pointers)" },
+        @{ Name = ".continuum"; Path = Join-Path $env:USERPROFILE ".continuum"; Description = "Continuum configs" },
+        @{ Name = ".anaconda_backup"; Path = Join-Path $env:USERPROFILE ".anaconda_backup"; Description = "anaconda-clean backup dir (if present)" },
+        @{ Name = ".condarc"; Path = Join-Path $env:USERPROFILE ".condarc"; Description = "User conda config" },
+        @{ Name = "Anaconda3"; Path = Join-Path $env:USERPROFILE "anaconda3"; Description = "Local Anaconda install - home dir" },
+        @{ Name = "Miniconda3"; Path = Join-Path $env:USERPROFILE "miniconda3"; Description = "Local Miniconda install - home dir" },
         @{ Name = "Anaconda3 (AppData)"; Path = Join-Path $lapp "anaconda3"; Description = "Local Anaconda install" },
-        @{ Name = "Anaconda3 (AppData)"; Path = Join-Path $lapp "Anaconda3"; Description = "Local Anaconda install (capitalized)" },
-        @{ Name = "Miniconda3 (AppData)"; Path = Join-Path $lapp "miniconda3"; Description = "Local Miniconda install" },
-        @{ Name = "Miniconda3 (AppData)"; Path = Join-Path $lapp "Miniconda3"; Description = "Local Miniconda install (capitalized)" }
+        @{ Name = "Miniconda3 (AppData)"; Path = Join-Path $lapp "miniconda3"; Description = "Local Miniconda install" }
     )
 
     # Filter only those that exist
-    return $items | Where-Object { Test-Path -LiteralPath $_.Path } | Sort-Object -Property Path -Unique
+    return $items | Where-Object { Test-Path $_.Path } | Sort-Object -Property Path
 }
 
 function CleanDirs {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param([switch]$BackupDirs)
 
-    $existingItems = Get-AnacondaCleanupItems
+    $existingItems = @(Get-AnacondaCleanupItems)
 
     if (-not $existingItems -or $existingItems.Count -eq 0) {
         Info "No Anaconda directories or configs found to clean."
@@ -199,8 +195,8 @@ function Invoke-AnacondaClean {
         try { conda install -n base -y anaconda-clean | Out-Null } catch { Warn "Could not ensure anaconda-clean is installed." }
     }
 
-    if ($PSCmdlet.ShouldProcess("anaconda-clean", "anaconda-clean --yes")) {
-        try { anaconda-clean --yes | Out-Null } catch { Warn "anaconda-clean returned non-zero." }
+    if ($PSCmdlet.ShouldProcess("anaconda-clean", "anaconda-clean --backup")) {
+        try { anaconda-clean --backup | Out-Null } catch { Warn "anaconda-clean returned non-zero." }
     }
 }
 
@@ -316,26 +312,25 @@ switch ($PSCmdlet.ParameterSetName) {
 $CandidateRoots = @()
 $CandidateRoots += @(
     (Join-Path $env:LOCALAPPDATA 'anaconda3'),
-    (Join-Path $env:LOCALAPPDATA 'Anaconda3'),
+    # (Join-Path $env:LOCALAPPDATA 'Anaconda3'),
     (Join-Path $env:LOCALAPPDATA 'miniconda3'),
-    (Join-Path $env:LOCALAPPDATA 'Miniconda3'),
+    # (Join-Path $env:LOCALAPPDATA 'Miniconda3'),
     (Join-Path $env:USERPROFILE  'anaconda3'),
-    (Join-Path $env:USERPROFILE  'Anaconda3'),
+    # (Join-Path $env:USERPROFILE  'Anaconda3'),
     (Join-Path $env:USERPROFILE  'miniconda3'),
-    (Join-Path $env:USERPROFILE  'Miniconda3'),
+    # (Join-Path $env:USERPROFILE  'Miniconda3'),
     'C:\Anaconda3',
     'C:\Miniconda3'
-) | Where-Object { $_ -and (Test-Path $_) }
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
 
 # Print the plan
 $plan = @()
 if ($DryRun)    { $plan += "DRY-RUN" }
-if ($DO_EXPORT) { $plan += "Export environments" }
-if ($ExportAll) { $plan += "ExportAll" }
+if ($DO_EXPORT) { $plan += ("Export environments " + $(if ($ExportAll) { "(all)" } else { "(select)" })) }
 if ($DO_VALIDATE) { $plan += "Validate exported YAMLs" }
 if ($DO_DEINIT) { $plan += "Deactivate env & de-init shells" }
 if ($DO_UNINSTALL) { $plan += "Run vendor uninstaller" }
-if ($DO_CLEAN) { $plan += ("{0} selected dirs/configs" -f (if ($BackupDirs) { "Backup" } else { "Clean" })) }
+if ($DO_CLEAN) { $plan += ("{0} selected dirs/configs" -f $(if ($BackupDirs) { "Backup" } else { "Clean" })) }
 Info ("Plan: " + ($plan -join "  ->  "))
 Info ("AnacondaPath: $AnacondaPath")
 
@@ -352,7 +347,7 @@ if ($DO_EXPORT) {
         }
     }
 
-    $allNames = Get-CondaEnvNames
+    $allNames = @(Get-CondaEnvNames)
     if (-not $allNames -or $allNames.Count -eq 0) {
         Warn "No environments found to export."
     }
@@ -415,7 +410,7 @@ if ($DO_VALIDATE) {
         Warn "Export directory not found: $ExportDir"
     }
     else {
-        $files = Get-ChildItem -LiteralPath $ExportDir -Filter *.yml -File -ErrorAction SilentlyContinue
+        $files = @(Get-ChildItem -LiteralPath $ExportDir -Filter *.yml -File -ErrorAction SilentlyContinue)
         if (-not $files -or $files.Count -eq 0) {
             Warn "No YAML files found to validate."
         }
@@ -457,12 +452,12 @@ if ($DO_DEINIT) {
 if ($DO_UNINSTALL) {
     # If user supplied AnacondaPath, we ONLY look in that root.
     # Otherwise, search the candidate list we already computed above.
-    $RootsForUninstall = if ($PSBoundParameters.ContainsKey('AnacondaPath')) {
+    $RootsForUninstall = @(if ($PSBoundParameters.ContainsKey('AnacondaPath')) {
         @($AnacondaPath) | Where-Object { $_ -and (Test-Path $_) }
     }
     else {
         $CandidateRoots
-    }
+    })
 
     if ($WithAnacondaClean) {
         Invoke-AnacondaClean -EnsureInstalled
@@ -470,7 +465,6 @@ if ($DO_UNINSTALL) {
     else {
         Info "Skipping anaconda-clean (enable with -WithAnacondaClean)."
     }
-
     if (-not $RootsForUninstall -or $RootsForUninstall.Count -eq 0) {
         Info "No candidate uninstall roots found to probe."
     }

@@ -203,7 +203,7 @@ function Import-Environments {
         return
     }
 
-    $files = Get-ChildItem -LiteralPath $ExportDir -Filter *.yml -File -ErrorAction SilentlyContinue
+    $files = @(Get-ChildItem -LiteralPath $ExportDir -Filter *.yml -File -ErrorAction SilentlyContinue)
     if (-not $files -or $files.Count -eq 0) {
         Warn "No exported YAML files found in $ExportDir"
         Info "If your exports are elsewhere, set `$env:EXPORT_DIR` and re-run."
