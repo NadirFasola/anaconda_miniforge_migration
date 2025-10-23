@@ -246,9 +246,53 @@ mamba update --all
 ### Windows Subsystem for Linux (WSL)
 [WSL](https://learn.microsoft.com/it-it/windows/wsl/) è, a rigore, un layer di compatibilità che permette di eseguire un environment Linux direttamente su Windows, senza l'overhead di macchine virtuali tradizionali. WSL fornisce un ambiente Linux production-like, ma non è altro che un OS environment, non un manager di pacchetti di sviluppo. Fornisce uno _spazio_ in cui lavorare, ma non gestisce, in autonomia, pacchetti software, dipendenze, librerie, o ambienti virtuali. Nonostante sia possibile argomentare a favore dei vantaggi offerti dall'adozione di WSL come strumento di sviluppo (cf. [WSL](#wsl)), risulterebbe comunque necessario installare un manager come Miniforge _all'interno_ di WSL per gestire dipendenze e installazioni locali, a livello di progetto. In un certo senso, WSL è uno strumento fondazionale, che complementa un package manager, piuttosto che rimpiazzarlo.
 ### Gestione pacchetti con uv
-[`uv`](https://docs.astral.sh/uv/) è un manager di pacchetti e ambienti di sviluppo per Python, sviluppato in Rust e progettato per essere un potenziale successore di tools come `pip` e `virtualenv`. Nonostante offra un'opzione eccezionalmente veloce e moderna, non può rappresentare un rimpiazzo 1-1 di Anaconda. Il suo punto di forza principale risiede nella velocità di installazione e risoluzione di pacchetti Python da PyPI. Anaconda, invece, tramite `conda`, può gestire anche librerie e dipendenze non strettamente Python-related, come librerie C/C++, toolkit CUDA, ecc. Anaconda rappresenta un approccio language-agnostic, aspetto che `uv` non è progettato per implementare. Proprio questa considerazione rende Anaconda una soluzione più ampia per uno stack che potenzialmente potrebbe coinvolgere più che il solo Python. Ciononostante, `uv` rappresenta un utile strumento per la gestione di progetti Python articolati, anche in abbinamento all'ecosistema Conda-Forge (`uv` permette la creazione di ambienti virtuali, ma anche l'automatic discovery di ambienti esistenti attivi, sia del tipo nativi che Conda).
+[`uv`](https://docs.astral.sh/uv/) è un manager di pacchetti e ambienti di sviluppo per Python, sviluppato in Rust e progettato per essere un potenziale successore di tools come `pip` e `virtualenv`. Nonostante offra un'opzione eccezionalmente veloce e moderna, non può rappresentare un rimpiazzo 1-1 di Anaconda. Il suo punto di forza principale risiede nella velocità di installazione e risoluzione di pacchetti Python da PyPI. Anaconda, invece, tramite `conda`, può gestire anche librerie e dipendenze non strettamente Python-related, come librerie C/C++, toolkit CUDA, ecc. Anaconda rappresenta un approccio language-agnostic, aspetto che `uv` non è progettato per implementare. Proprio questa considerazione rende Anaconda una soluzione più ampia per uno stack che potenzialmente potrebbe coinvolgere più che il solo Python. Ciononostante, `uv` rappresenta un utile strumento per la gestione di progetti Python articolati, anche in abbinamento all'ecosistema Conda-Forge (`uv` permette la creazione di ambienti virtuali, ma anche l'automatic discovery di ambienti esistenti attivi, sia nativi sia Conda-like).
 
-**Come consiglio pratico**, potrebbe essere utile utilizzare `uv` all'interno di un ambiente Conda per combinare la velocità di risoluzione delle dipendenze su PyPI con la stabilità dei binari `conda-forge`, mantenendo al contempo la separazione tra la gestione delle dipendenze Python pure e le librerie di sistema.
+**In pratica**, utilizzare `uv` all'interno di un ambiente Conda per combinare la velocità di risoluzione delle dipendenze su PyPI con la stabilità dei binari `conda-forge`, mantenendo al contempo la separazione tra la gestione delle dipendenze Python pure e le librerie di sistema, rappresenta una buona soluzione, minimamente distruttiva dei workflow attualmente esistenti. Inoltre, permette un allineamento maggiore con i moderni packaging standards per Python, che evolvono intorno a [PEP 517](https://peps.python.org/pep-0517/), [518](https://peps.python.org/pep-0518/) e [621](https://peps.python.org/pep-0621/). In generale, workflow di sviluppo moderni in Python tendono a convergere verso un modello *"native-first"*, in cui:
+
+- Configurazione del progetto e metadati sono dichiarati in un file `pyproject.toml` (PEP 621).
+- Le build e le installazioni seguono interfacce standard definite dal backend (`build-backend` in PEP 517).
+- Risoluzione delle dipendenze e locking sono eseguite a livello di Python, utilizzando metadati standard piuttosto che il risolutore custom di Conda.
+- Ambienti sono creati e isolati utilizzando ambienti virtuali leggeri e nativi, garantendo compatiblità immediata con strumenti PEP-conformi e CI workflow.
+
+In questo ecosistema, `uv` emerge come uno strumento di nuova generazione costruito precisamente intorno agli standard definiti sopra. Integrandolo con ambienti gestiti da Miniforge, otteniamo un'architettura a due livelli che massimizza tanto la compatibilità con i workflow esistenti quanto quella futura.
+
+1. **Layer Miniforge**: gestisce dipendenze non Python a livello di sistema (e.g. toolkit CUDA, compilator, BLAS, node.js, ecc.) e fornisce un ambiente isolato come base per la riproducibilità.
+1. **Layer `uv`**: opera all'interno dell'ambiente Conda, gestendo pacchetti Python in una maniera conforme allo standard definito da PEP. Utilizza `pyproject.toml` e `uv.lock` per la gestione delle dipendenze e la garanzia di un ambiente deterministico su tutte le macchine e le pipeline, offrendo al contempo risoluzione veloce e cache per installazioni rapide.
+
+Da un punto di vista operativo, questa integrazione rappresenterebbe un percorso di modernizzazione a basso attrito con i workflow esistenti. Il team potrebbe continuare a utilizzare strumenti familiari afferenti a Conda, adottando progressivamente `uv` per la gestione delle dipendenze a livello di progetto e l'orchestrazione della compilazione.
+
+#### Note pratiche per l'integrazione di `uv` e Miniforge
+
+Integrare Miniforge (preferendo `mamba`) e `uv` seguendo un approccio stratificato:
+
+1. **Utilizzare Miniforge _solo_ per il livello di sistema**, ovvero per fornire:
+	- un interpreter Python minimale;
+	- dipendenze di sistema;
+	- strumenti multilingua (R, Go, Rust, js) secondo la necessità.
+	Esempio:
+	```shell
+	mamba create -n <project_name> python=3.11 pip uv -y
+	mamba activate <project_name>
+	```
+1. **Delegare a `uv` la gestione dei pacchetti Python**, definendo metadati e dipendenze in `pyproject.toml`, e.g.
+	```toml
+	[project]
+	name = <project_name>
+	version = <project_ver>
+	description = <project_desc>
+	dependencies = [
+		"pandas",
+		"numpy",
+		"scikit-learn"
+	]
+
+	[build-systems]
+	requires = ["hatchling"]
+	build-backend = "hatchling.build"
+	```
+	Fissando le dipendenze in maniera deterministica tramite `uv lock` e sincronizzando con `uv sync`. Inoltre, `uv` rileva automaticamente quando viene eseguito all'interno di un ambiente Conda, e installa dipendenze direttamente nel contesto di tale ambiente, evitando ambienti virtuali sovrapposti inutilmente.
+
 ## Appendice e riferimenti
 
 ### Script di automazione
