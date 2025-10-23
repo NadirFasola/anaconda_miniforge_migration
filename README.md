@@ -2,7 +2,7 @@
 
 Procedura di migrazione del gestore di ambienti Python da **Anaconda** a **Miniforge**. L'obiettivo è garantire la conformità alle politiche di licenze software, mantenendo la compatibilità con i progetti e gli ambienti esistenti. Un eventuale abbinamento con WSL2 su Windows offre parity con runtime Linux in distribuzione, migliori prestazioni I/O e un flusso di sviluppo più coerente con le pipeline cloud.
 
-**Quick-usage instructions:** [USAGE](./scripts/USAGE.md)
+**Quick-usage instructions:** [USAGE](./USAGE.md)
 
 ## 1. Confronto Anaconda vs. Miniforge
 
