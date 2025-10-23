@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# ANACONDA UNINSTALLER
+# ANACONDA UNINSTALLER (Bash)
 # =============================================================================
 # Part of a guided bash script to help migrating from Anaconda to Miniforge.
 # Read the script before running.
@@ -10,213 +10,401 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# Track if export is in progress
-EXPORT_IN_PROGRESS=false
-CURRENT_EXPORT_FILE=""
-
-cleanup() {
-    # If we were interrupted during an export, warn about potential partial file
-    if $EXPORT_IN_PROGRESS && [[ -n "$CURRENT_EXPORT_FILE" ]] && [[ -f "$CURRENT_EXPORT_FILE" ]]; then
-        warn "Export was interrupted. File may be incomplete: $CURRENT_EXPORT_FILE"
-        warn "Consider deleting it and re-running the export."
-    fi
-}
-trap cleanup EXIT INT TERM
-
-if [ -n "${SHELL:-}" ]; then
-    CURRENT_SHELL=$(basename "$SHELL")
-elif [ -n "${0:-}" ]; then
-    CURRENT_SHELL=$(basename "$0")
-else
-    CURRENT_SHELL=$(ps -p $$ | awk 'NR==2 {print $NF}' 2>&1 | xargs basename)
-fi
-
-# Defaults
 EXPORT_DIR="${EXPORT_DIR:-$HOME/conda_migration_exports}"
-ANACONDA_PATH="${ANACONDA_PATH:-$HOME/anaconda3}"
+ANACONDA_PATH="${ANACONDA_PATH:-}"
 ASSUME_YES=false
 DRY_RUN=false
+BACKUP=false
 EXPORT_ALL=false
 FROM_HISTORY=false
 EXPORT_ONLY=false
 DEINIT_ONLY=false
 UNINSTALL_ONLY=false
-NO_ANACONDA_CLEAN=false
+WITH_ANACONDA_CLEAN=false
 
-# Track uninstaller success
-UNINSTALLER_RAN=false
+EXPORT_IN_PROGRESS=false
+CURRENT_EXPORT_FILE=""
 
-# Helpers
-log() { printf "[%s] %s\n" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$*"; }
+# ------------------------------- Logging -------------------------------------
+ts() { date +%Y-%m-%dT%H:%M:%S%z; }
+log()  { printf "[%s] %s\n" "$(ts)" "$*"; }
 info() { log "INFO: $*"; }
 warn() { log "WARN: $*"; }
-err() { log "ERROR: $*"; exit 1; }
-dry_run_msg() { 
-    if $DRY_RUN; then
-        log "DRY-RUN: $*"
-    fi
+err()  { log "ERROR: $*"; exit 1; }
+
+# ------------------------------ Small Helpers --------------------------------
+do_run() {
+  # do_run <description> -- <command...>
+  local desc="$1"; shift
+  if [[ "$1" == "--" ]]; then shift; fi
+  if $DRY_RUN; then
+    log "DRY-RUN: $desc"
+    [[ $# -gt 0 ]] && log "DRY-RUN: would run: $*"
+    return 0
+  fi
+  [[ -n "$desc" ]] && info "$desc"
+  if [[ $# -gt 0 ]]; then
+    "$@"
+  fi
 }
 
 confirm() {
-    if $ASSUME_YES; then
-        return 0
-    fi
-    read -r -p "$1 [y/N]: " resp
-    case "$resp" in
-        [yY]|[yY][eE][sS]) return 0 ;;
-        *) return 1 ;;
-    esac
+  $ASSUME_YES && return 0
+  local prompt="${1:-Proceed?} [y/N]: "
+  read -r -p "$prompt" resp || true
+  case "$resp" in
+    [yY]|[yY][eE][sS]) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
+# ------------------------------ Cleanup on EXIT ------------------------------
+cleanup_trap() {
+  if $EXPORT_IN_PROGRESS && [[ -n "$CURRENT_EXPORT_FILE" ]] && [[ -f "$CURRENT_EXPORT_FILE" ]]; then
+    warn "Export was interrupted. File may be incomplete: $CURRENT_EXPORT_FILE"
+    warn "Consider deleting it and re-running the export."
+  fi
+}
+trap cleanup_trap EXIT INT TERM
+
+# ------------------------------ Argparse -------------------------------------
 usage() {
-  cat <<EOF
-Usage: $0 [options]
+  cat <<'EOF'
+Usage: anaconda_uninstall.sh [options]
+
 Export:
-  --export-all              Export all conda environments (default: interactive selection)
-  --from-history            Export using --from-history (only explicitly-installed packages)
-  --export-dir PATH         Directory for exported envs (default: ~/conda_migration_exports)
+  --export-all              Export all conda envs (default: interactive selection)
+  --from-history            Use 'conda env export --from-history'
+  --export-dir PATH         Directory for exports (default: $HOME/conda_migration_exports)
   --export-only             Only export & validate, then exit
 
 Deinit / Uninstall / Clean:
-  --deinit-only             Only reverse Anaconda init for all shells, then exit
-  --uninstall-only          Only run Anaconda uninstaller + cleanup, then exit
-  --anaconda-path DIR       Anaconda/Miniconda root (default: ~/anaconda3)
-  --no-anaconda-clean       Do NOT offer 'anaconda-clean' pre-uninstall
+  --deinit-only             Only reverse conda init (all shells), then exit
+  --uninstall-only          Skip only export; still deinit + uninstall + clean
+  --anaconda-path DIR       Explicit Anaconda/Miniconda root; ONLY this root is used
+  --with-anaconda-clean     Run 'anaconda-clean --yes' pre-uninstall (no prompt)
 
 Common:
-  --yes                     Assume yes for prompts
-  --dry-run                 Show actions without performing them
-  --help                    Show this help
+  --backup                  During cleanup, back up paths to *.old instead of removing
+  --yes                     Assume "yes" on prompts
+  --dry-run                 Print actions without performing them
+  --help                    Show help
 
-Environment variables:
-  EXPORT_DIR                Directory for exported environments
-  ANACONDA_PATH             Root of Anaconda/Miniconda installation
+Env vars:
+  EXPORT_DIR, ANACONDA_PATH behave like their flags when set.
 EOF
 }
 
-validate_export() {
-    local file="$1"
-    local env_name="$2"
-    [[ -f "$file" ]] || { warn "Export file not found: $file"; return 1; }
-    [[ -s "$file" ]] || { warn "Export file is empty: $file"; return 1; }
-    # check for env name and deps
-    grep -q "^name:" "$file" 2>/dev/null || { warn "Export $file missing 'name:'"; return 1; }
-    grep -q "^dependencies:" "$file" 2>/dev/null || { warn "Export $file missing 'dependencies:'"; return 1; }
-    local dep_count
-    dep_count=$(awk '/^dependencies:/,/^[a-z]/ {if ($0 ~ /^[[:space:]]*-/) count++} END {print count+0}' "$file")
-    (( dep_count > 0 )) || { warn "Export $file has no packages listed"; return 1; }
-    info "✓ Validated $file ($dep_count packages)"
-    return 0
-}
-
-# Parse args
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --export-all) EXPORT_ALL=true; shift ;;
-    --from-history) FROM_HISTORY=true; shift ;;
-    --export-dir) EXPORT_DIR="$2"; shift 2 ;;
-    --anaconda-path) ANACONDA_PATH="$2"; shift 2 ;;
+    --export-all)         EXPORT_ALL=true; shift ;;
+    --from-history)       FROM_HISTORY=true; shift ;;
+    --export-dir)         EXPORT_DIR="$2"; shift 2 ;;
+    --export-only)        EXPORT_ONLY=true; shift ;;
 
-    --export-only) EXPORT_ONLY=true; shift ;;
-    --deinit-only) DEINIT_ONLY=true; shift ;;
-    --uninstall-only) UNINSTALL_ONLY=true; shift ;;
-    --no-anaconda-clean) NO_ANACONDA_CLEAN=true; shift ;;
+    --deinit-only)        DEINIT_ONLY=true; shift ;;
+    --uninstall-only)     UNINSTALL_ONLY=true; shift ;;
+    --anaconda-path)      ANACONDA_PATH="$2"; shift 2 ;;
+    --with-anaconda-clean)WITH_ANACONDA_CLEAN=true; shift ;;
 
-    --yes) ASSUME_YES=true; shift ;;
-    --dry-run) DRY_RUN=true; shift ;;
-    --help) usage; exit 0 ;;
+    --backup)             BACKUP=true; shift ;;
+    --yes)                ASSUME_YES=true; shift ;;
+    --dry-run)            DRY_RUN=true; shift ;;
+    --help|-h)            usage; exit 0 ;;
     *) warn "Unknown option: $1"; usage; exit 1 ;;
   esac
 done
 
-$DRY_RUN && echo "🔧 DRY-RUN MODE: No changes will be made"
+$DRY_RUN && log "🔧 DRY-RUN MODE ENABLED"
 
-# Resolve possible flag conflicts.
-# Stages.
+# ------------------------------ Stage Plan -----------------------------------
 DO_EXPORT=true
 DO_VALIDATE=true
 DO_DEINIT=true
 DO_UNINSTALL=true
 DO_CLEAN=true
 
-# ONLY flags are mutually exclusive
-ONLY_COUNT=0
-$EXPORT_ONLY && ((ONLY_COUNT++))
-$DEINIT_ONLY && ((ONLY_COUNT++))
-$UNINSTALL_ONLY && ((ONLY_COUNT++))
-if (( ONLY_COUNT > 1 )); then
-  err "Conflicting flags: only one of --export-only, --deinit-only, --uninstall-only may be used."
-fi
-# Apply *ONLY* modifiers, which are mutually exclusive and override others.
-if $EXPORT_ONLY; then
-  DO_DEINIT=false; DO_UNINSTALL=false; DO_CLEAN=false
-fi
-if $DEINIT_ONLY; then
-  DO_EXPORT=false; DO_VALIDATE=false; DO_UNINSTALL=false; DO_CLEAN=false
-fi
-if $UNINSTALL_ONLY; then
-  DO_EXPORT=false; DO_VALIDATE=false; DO_DEINIT=false
-  # clean default still true unless uninstaller ran successfully
-fi
-# Respect explicit NO_*
-$NO_ANACONDA_CLEAN && :  # handled just-in-time
+only_count=0
+$EXPORT_ONLY   && ((only_count++))
+$DEINIT_ONLY   && ((only_count++))
+$UNINSTALL_ONLY&& ((only_count++))
+(( only_count > 1 )) && err "Use only one of --export-only / --deinit-only / --uninstall-only."
 
-# Sanity checks
-if ! command -v conda >/dev/null 2>&1; then
-  if $DO_EXPORT || $DO_DEINIT; then
-    warn "conda not found in PATH; export/deinit will be skipped if they require conda."
-  fi
+if $EXPORT_ONLY;   then DO_DEINIT=false; DO_UNINSTALL=false; DO_CLEAN=false; fi
+if $DEINIT_ONLY;   then DO_EXPORT=false; DO_VALIDATE=false; DO_UNINSTALL=false; DO_CLEAN=false; fi
+if $UNINSTALL_ONLY; then DO_EXPORT=false; DO_VALIDATE=false; DO_DEINIT=true; DO_UNINSTALL=true; DO_CLEAN=true; fi
+
+# ------------------------------ Resolve ANACONDA_PATH ------------------------
+# If user supplied ANACONDA_PATH -> only search there.
+# Else probe known candidates and pick the first that exists; else default to ~/anaconda3.
+declare -a CANDIDATE_ROOTS=()
+if [[ -n "${ANACONDA_PATH}" ]]; then
+  CANDIDATE_ROOTS=("${ANACONDA_PATH}")
+else
+  CANDIDATE_ROOTS=(
+    "$HOME/anaconda3"
+    "$HOME/Anaconda3"
+    "$HOME/miniconda3"
+    "$HOME/Miniconda3"
+    "/opt/anaconda3"
+    "/opt/miniconda3"
+  )
 fi
 
-# Print the final uninstall plan
-PLAN=()
-$DO_EXPORT   && PLAN+=("export")
-$DO_VALIDATE && PLAN+=("validate")
-$DO_DEINIT   && PLAN+=("deinit")
-$DO_UNINSTALL&& PLAN+=("uninstall")
-$DO_CLEAN    && PLAN+=("clean")
-info "Execution plan: ${PLAN[*]:-(no-ops)}"
+pick_first_existing_root() {
+  local r
+  for r in "${CANDIDATE_ROOTS[@]}"; do
+    [[ -d "$r" ]] && { echo "$r"; return 0; }
+  done
+  echo ""
+}
 
-mkdir -p "$EXPORT_DIR"
+if [[ -z "${ANACONDA_PATH}" ]]; then
+  ANACONDA_PATH="$(pick_first_existing_root)"
+  [[ -z "$ANACONDA_PATH" ]] && ANACONDA_PATH="$HOME/anaconda3"
+fi
+
+# ------------------------------ Print Execution Plan -------------------------
+plan=()
+$DO_EXPORT    && plan+=("export")
+$DO_VALIDATE  && plan+=("validate")
+$DO_DEINIT    && plan+=("deinit")
+$DO_UNINSTALL && plan+=("uninstall")
+$DO_CLEAN     && plan+=("${BACKUP:+backup}${BACKUP:-clean}")
+info "Execution plan: ${plan[*]:-(no-ops)}"
 info "Export directory: $EXPORT_DIR"
-info "Anaconda path: $ANACONDA_PATH"
+info "Anaconda path:   $ANACONDA_PATH"
 
-# Export environments
+# ------------------------------ Helpers --------------------------------------
+have_conda() { command -v conda >/dev/null 2>&1; }
+
+backup_path_safe() {
+  # backup_path_safe <path>  -> moves to <path>.old[.stamp[.N]]
+  local src="$1"
+  [[ -e "$src" ]] || return 0
+  local candidate="${src}.old"
+  if [[ -e "$candidate" ]]; then
+    local stamp
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    candidate="${src}.old.${stamp}"
+    local i=2
+    while [[ -e "$candidate" ]]; do
+      candidate="${src}.old.${stamp}.${i}"
+      ((i++))
+    done
+  fi
+  if $DRY_RUN; then
+    log "DRY-RUN: backup $src -> $candidate"
+  else
+    local parent
+    parent="$(dirname "$candidate")"
+    [[ -d "$parent" ]] || mkdir -p "$parent"
+    mv -f -- "$src" "$candidate"
+  fi
+}
+
+remove_path() {
+  local p="$1"
+  if $DRY_RUN; then
+    log "DRY-RUN: remove $p"
+  else
+    rm -rf -- "$p"
+  fi
+}
+
 export_env() {
-    local env_name="$1"
-    local out="$EXPORT_DIR/${env_name}.yml"
-    EXPORT_IN_PROGRESS=true; CURRENT_EXPORT_FILE="$out"
-    if $FROM_HISTORY; then
-        info "Exporting $env_name with --from-history -> $out"
-        conda env export -n "$env_name" --no-builds --from-history | sed '/^prefix:/d' > "$out"
-    else
-        info "Exporting $env_name -> $out"
-        conda env export -n "$env_name" --no-builds | sed '/^prefix:/d' > "$out"
-    fi
-    EXPORT_IN_PROGRESS=false; CURRENT_EXPORT_FILE=""
+  local env_name="$1"
+  local out="${EXPORT_DIR}/${env_name}.yml"
+  EXPORT_IN_PROGRESS=true; CURRENT_EXPORT_FILE="$out"
+  local cmd=(conda env export -n "$env_name" --no-builds)
+  $FROM_HISTORY && cmd+=(--from-history)
+  if $DRY_RUN; then
+    log "DRY-RUN: export $env_name -> $out"
+  else
+    "${cmd[@]}" | sed '/^prefix:/d' >"$out"
+  fi
+  EXPORT_IN_PROGRESS=false; CURRENT_EXPORT_FILE=""
 }
 
 extract_envs() {
-    if command -v conda >/dev/null 2>&1; then
-        conda env list | awk '$1 ~ /^[a-zA-Z0-9_\-]+$/ {print $1}'
-    else
-        warn "\`conda\` not found; cannot extract environments!"
-        echo ""
-    fi
+  have_conda || { warn "conda not found; cannot list environments."; return 0; }
+  conda env list | awk '$1 ~ /^[[:alnum:]_-]+$/ {print $1}'
 }
 
-if $DO_EXPORT; then
-  if ! command -v conda >/dev/null 2>&1; then
-    warn "Skipping export: conda not available."
+validate_export() {
+  local file="$1"
+  [[ -f "$file" ]] || { warn "Missing: $file"; return 1; }
+  [[ -s "$file" ]] || { warn "Empty file: $file"; return 1; }
+  grep -q '^[[:space:]]*name:' "$file"    || { warn "$file missing 'name:'"; return 1; }
+  grep -q '^[[:space:]]*dependencies:' "$file" || { warn "$file missing 'dependencies:'"; return 1; }
+  local depc
+  depc=$(awk '/^dependencies:/,/^[^[:space:]-]/{if ($0 ~ /^[[:space:]]*-/) c++} END{print c+0}' "$file")
+  (( depc > 0 )) || { warn "$file has zero dependencies"; return 1; }
+  info "✓ Validated $file ($depc packages)"
+  return 0
+}
+
+run_anaconda_clean() {
+  have_conda || { warn "conda not found; skipping anaconda-clean."; return; }
+  if $WITH_ANACONDA_CLEAN; then
+    do_run "Installing anaconda-clean in base env" -- conda install -n base -y anaconda-clean
+    do_run "Running anaconda-clean --yes" -- anaconda-clean --yes || warn "anaconda-clean returned non-zero"
   else
+    if confirm "Run 'anaconda-clean --yes' before uninstall? (removes caches/configs)"; then
+      do_run "Installing anaconda-clean in base env" -- conda install -n base -y anaconda-clean
+      do_run "Running anaconda-clean --yes" -- anaconda-clean --yes || warn "anaconda-clean returned non-zero"
+    else
+      info "Skipping anaconda-clean."
+    fi
+  fi
+}
+
+conda_deinit() {
+  if have_conda; then
+    # Deactivate current env (best-effort)
+    $DRY_RUN || conda deactivate 2>/dev/null || true
+    if confirm "Remove conda initialization from all shells (conda init --reverse --all)?"; then
+      do_run "Reversing conda init for all shells" -- conda init --reverse --all || warn "Could not reverse conda init for all shells."
+    else
+      info "Skipped conda init cleanup."
+    fi
+  else
+    warn "conda not found; skipping deactivation/deinit."
+  fi
+}
+
+# Uninstaller discovery
+# If user provided ANACONDA_PATH: ONLY search there. Else probe candidates.
+find_uninstaller() {
+  local roots=()
+  if [[ -n "${ANACONDA_PATH}" ]]; then
+    roots=("${ANACONDA_PATH}")
+  else
+    roots=(
+      "$HOME/anaconda3" "$HOME/Anaconda3"
+      "$HOME/miniconda3" "$HOME/Miniconda3"
+      "/opt/anaconda3" "/opt/miniconda3"
+    )
+  fi
+  local r
+  for r in "${roots[@]}"; do
+    local u="$r/uninstall.sh"
+    [[ -x "$u" ]] && { echo "$u"; return 0; }
+  done
+  echo ""
+}
+
+run_uninstaller() {
+  local u="$1"
+  info "Detected Anaconda uninstaller at: $u"
+  if confirm "Run the official uninstaller now?"; then
+    do_run "Running uninstaller" -- "$u" --remove-caches --remove-config-files user || \
+      warn "Uninstaller exited non-zero (manual review may be needed)."
+  else
+    info "Skipped official uninstaller."
+  fi
+}
+
+list_cleanup_items() {
+  local items=(
+    "$ANACONDA_PATH|Anaconda root|Installation directory"
+    "$HOME/miniconda3|~/miniconda3|Miniconda user dir"
+    "$HOME/.conda|~/.conda|Conda state directory"
+    "$HOME/.continuum|~/.continuum|Legacy Continuum config"
+    "$HOME/.condarc|~/.condarc|Conda config file"
+  )
+  local entry p
+  for entry in "${items[@]}"; do
+    p="${entry%%|*}"
+    [[ -e "$p" ]] && echo "$entry"
+  done
+}
+
+apply_cleanup_selection() {
+  local selection="$1"
+  local -a paths=()
+  local -a labels=()
+  local -a descs=()
+
+  mapfile -t rows < <(list_cleanup_items)
+  ((${#rows[@]}==0)) && { info "No Anaconda directories or configs found to clean."; return; }
+
+  echo ""
+  echo "Found the following Anaconda-related directories and configs:"
+  echo ""
+  local i=0
+  for row in "${rows[@]}"; do
+    IFS='|' read -r path label desc <<<"$row"
+    printf "  %2d) %-30s (%s)\n" "$((i+1))" "$label" "$desc"
+    echo "      Path: $path"
+    paths[$i]="$path"; labels[$i]="$label"; descs[$i]="$desc"
+    ((i++))
+  done
+  echo ""
+  local verb; verb=$($BACKUP && echo "Backup" || echo "Remove")
+  echo "  a) ${verb} all"
+  echo "  n) ${verb} none"
+  echo ""
+
+  local pick="$selection"
+  if [[ -z "$pick" ]]; then
+    read -r -p "Select items to ${verb,,} (e.g. '1 3 5' or 'a'/'n'): " pick
+  fi
+
+  local -a chosen=()
+  if [[ "$pick" == "a" ]]; then
+    chosen=("${paths[@]}")
+  elif [[ "$pick" == "n" || -z "$pick" ]]; then
+    info "No items selected."
+    return
+  else
+    for idx in $pick; do
+      if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx>=1 && idx<=${#paths[@]} )); then
+        chosen+=("${paths[$((idx-1))]}")
+      else
+        warn "Ignoring invalid selection: $idx"
+      fi
+    done
+    ((${#chosen[@]}==0)) && { info "No items selected."; return; }
+  fi
+
+  echo ""
+  echo "─────────────────────────────────────────────────────────────"
+  echo "  FINAL CONFIRMATION"
+  echo "─────────────────────────────────────────────────────────────"
+  echo "About to $([ $BACKUP = true ] && echo "backup" || echo "remove"):"
+  for c in "${chosen[@]}"; do echo "  - $c"; done
+  echo ""
+
+  if confirm "Are you sure?"; then
+    local c
+    for c in "${chosen[@]}"; do
+      if [[ -e "$c" ]]; then
+        if $BACKUP; then
+          backup_path_safe "$c"
+        else
+          remove_path "$c"
+        fi
+      fi
+    done
+  else
+    info "Cleanup cancelled."
+  fi
+}
+
+# ------------------------------ Export Stage ---------------------------------
+if $DO_EXPORT; then
+  do_run "Ensuring export directory exists: $EXPORT_DIR" -- mkdir -p -- "$EXPORT_DIR"
+  if have_conda; then
     if $EXPORT_ALL; then
-      info "Exporting all environments..."
+      info "Exporting all environments…"
       mapfile -t ENVS < <(extract_envs)
+      ((${#ENVS[@]}==0)) && warn "No environments found to export."
       for e in "${ENVS[@]}"; do [[ -n "$e" ]] && export_env "$e"; done
     else
-      info "Interactive export: select environments to export."
+      info "Interactive export selection."
       mapfile -t ENVS < <(extract_envs)
-      if [[ ${#ENVS[@]} -eq 0 ]]; then
+      if ((${#ENVS[@]}==0)); then
         warn "No environments found to export."
       else
         echo "Found environments:"
@@ -226,7 +414,7 @@ if $DO_EXPORT; then
         read -r -p "Select (e.g. '1 3' or 'a' or 'q'): " sel
         if [[ "$sel" == "a" ]]; then
           for e in "${ENVS[@]}"; do export_env "$e"; done
-        elif [[ "$sel" != "q" ]]; then
+        elif [[ "$sel" != "q" && -n "$sel" ]]; then
           for idx in $sel; do
             if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx>=1 && idx<=${#ENVS[@]} )); then
               export_env "${ENVS[$((idx-1))]}"
@@ -237,306 +425,70 @@ if $DO_EXPORT; then
         fi
       fi
     fi
+    info "Export step complete. Files: $EXPORT_DIR/*.yml"
+  else
+    warn "conda not found in PATH; skipping export."
   fi
-  info "Export step complete. Files are under: $EXPORT_DIR"
 fi
 
+# ------------------------------ Validate Stage -------------------------------
 if $DO_VALIDATE; then
-  info "Validating exported YAML files..."
+  info "Validating exported YAML files…"
   shopt -s nullglob
   EXPORTED_FILES=("$EXPORT_DIR"/*.yml)
-  if (( ${#EXPORTED_FILES[@]} == 0 )); then
+  if ((${#EXPORTED_FILES[@]}==0)); then
     warn "No YAML files found to validate."
   else
     FAILED=false
-    for file in "${EXPORTED_FILES[@]}"; do validate_export "$file" || FAILED=true; done
+    for f in "${EXPORTED_FILES[@]}"; do validate_export "$f" || FAILED=true; done
     if $FAILED; then
-        err "⚠️  Validation failed for one or more exports. Please review the warnings above.
-    
-    You have these options:
-    1. Fix the problematic environments and re-export them
-    2. Delete the invalid .yml files if you don't need those environments
-    3. Manually edit the .yml files to fix issues
-    
-    Re-run this script to validate again, or proceed directly to uninstallation if you're confident."
+      err "Validation failed for one or more exports. Fix or re-export before uninstall."
     fi
-    info "✓ All exported environments validated."
-    info "   Total: ${#EXPORTED_FILES[@]} environment(s)"
+    info "✓ All exported environments validated. Total: ${#EXPORTED_FILES[@]}"
   fi
 fi
 
-# --export-only short-circuit
-$EXPORT_ONLY && { info "--export-only done."; exit 0; }
+# Short-circuit
+$EXPORT_ONLY && { info "--export-only complete."; exit 0; }
 
-# --deinit-only short-circuit
-$DEINIT_ONLY && {
-  info "--deinit-only: reversing conda init for all shells"
-  if $DRY_RUN; then
-    dry_run_msg "Would run: conda init --reverse --all"
-  else
-    if command -v conda &>/dev/null; then
-      conda init --reverse --all || warn "Could not reverse conda init for all shells."
-    else
-      warn "conda not found; cannot reverse init automatically."
-    fi
-  fi
-  info "--deinit-only complete."
-  exit 0
-}
-
-# Find uninstaller
-find_uninstaller() {
-    local candidates=(
-        "$ANACONDA_PATH/uninstall.sh"
-        "$HOME/anaconda3/uninstall.sh"
-        "/opt/anaconda3/uninstall.sh"
-        "$HOME/miniconda3/uninstall.sh"
-        "/opt/miniconda3/uninstall.sh"
-    )
-    for u in "${candidates[@]}"; do
-        [[ -x "$u" ]] && { echo "$u"; return 0; }
-    done
-    echo ""
-}
-
-# --uninstall-only mode
-if $UNINSTALL_ONLY; then
-    UNINSTALLER_FOUND=$(find_uninstaller)
-    
-    if [[ -n "$UNINSTALLER_FOUND" ]]; then
-        info "Detected Anaconda uninstaller at: $UNINSTALLER_FOUND"
-        if confirm "Run the official uninstaller now?"; then
-            if $DRY_RUN; then
-                dry_run_msg "Would run: $UNINSTALLER_FOUND --remove-caches --remove-config-files user"
-                [[ "$UNINSTALLER_FOUND" == /opt/* ]] && warn "Admin privileges would be needed."
-            else
-                if [[ "$UNINSTALLER_FOUND" == /opt/* ]]; then
-                    warn "Admin privileges needed to uninstall!"
-                else
-                    "$UNINSTALLER_FOUND" --remove-caches --remove-config-files user --remove-user-data
-                    EXIT_CODE=$?
-                    if (( EXIT_CODE == 0 )); then
-                        UNINSTALLER_RAN=true
-                        info "Uninstaller completed successfully (exit code: 0)."
-                    else
-                        warn "Uninstaller exited with non-zero code: $EXIT_CODE"
-                        info "You may need to review the uninstall manually or run cleanup."
-                    fi
-                fi
-            fi
-        else
-            info "Skipped official uninstaller."
-        fi
-    else
-        info "No official uninstaller detected at common locations."
-    fi
-    
-    # If uninstaller ran successfully, skip cleanup and exit
-    if $UNINSTALLER_RAN; then
-        info "--uninstall-only complete."
-        exit 0
-    fi
-    # Otherwise, proceed to cleanup
-fi
-
-# Final confirmation before destructive operations
-if ($DO_UNINSTALL || $DO_CLEAN) && ! $DRY_RUN; then
-    echo ""
-    echo "─────────────────────────────────────────────────────────────"
-    echo "  ⚠️  POINT OF NO RETURN"
-    echo "─────────────────────────────────────────────────────────────"
-    echo "The following steps will REMOVE Anaconda from your system."
-    echo "Exported environments are in: $EXPORT_DIR"
-    echo ""
-    if ! confirm "Have you verified the exports are correct and ready to proceed?"; then
-        info "Aborting. No changes made to Anaconda installation."
-        exit 0
-    fi
-fi
-
-# Optional anaconda-clean
-if ! $NO_ANACONDA_CLEAN && command -v conda >/dev/null 2>&1 && $DO_UNINSTALL; then
-    info "Anaconda/Miniconda detected. Preparing cleanup via anaconda-clean."
-    if confirm "Do you want to run 'anaconda-clean' (removes configs and caches) before uninstalling?"; then
-        if $DRY_RUN; then
-            dry_run_msg "Would install anaconda-clean in base environment"
-            dry_run_msg "Would run: anaconda-clean --yes"
-        else
-            info "Installing anaconda-clean in current conda"
-            conda install -n base anaconda-clean -y
-            info "Running anaconda-clean --yes"
-            anaconda-clean --yes || warn "anaconda-clean returned non-zero"
-        fi
-    else
-        info "Skipping anaconda-clean"
-    fi
-elif ! $NO_ANACONDA_CLEAN && ! command -v conda >/dev/null 2>&1 && $DO_UNINSTALL; then
-    warn "\`conda\` not found; skipping anaconda-clean step"
-fi
-
-# Deactivate any env and deinit
+# ------------------------------ Deinit Stage ---------------------------------
 if $DO_DEINIT; then
-  if command -v conda &>/dev/null; then
-    $DRY_RUN && dry_run_msg "Would deactivate any active conda environment" || conda deactivate 2>/dev/null || true
-    if confirm "Remove conda initialization from shell profiles?"; then
-      $DRY_RUN && dry_run_msg "Would run: conda init --reverse --all" || conda init --reverse --all || warn "Could not reverse conda init for all shells."
-    else
-      info "Skipped conda init cleanup."
-    fi
+  conda_deinit
+fi
+
+# ------------------------------ Uninstall Stage ------------------------------
+if $DO_UNINSTALL; then
+  # Optional anaconda-clean first
+  if have_conda; then
+    run_anaconda_clean
   else
-    warn "conda not found; skipping deactivation/deinit."
+    warn "conda not found; skipping anaconda-clean."
+  fi
+
+  UNINSTALLER="$(find_uninstaller)"
+  if [[ -n "$UNINSTALLER" ]]; then
+    run_uninstaller "$UNINSTALLER"
+  else
+    info "No official uninstaller detected for root(s) searched."
   fi
 fi
 
-# Uninstall
-if $DO_UNINSTALL; then
-    UNINSTALLER_FOUND=$(find_uninstaller)
-    
-    if [[ -n "$UNINSTALLER_FOUND" ]]; then
-        info "Detected Anaconda uninstaller at: $UNINSTALLER_FOUND"
-        if confirm "Run the official uninstaller now?"; then
-            if $DRY_RUN; then
-                dry_run_msg "Would run: $UNINSTALLER_FOUND --remove-caches --remove-config-files user --remove-user-data"
-                [[ "$UNINSTALLER_FOUND" == /opt/* ]] && warn "Admin privileges would be needed."
-            else
-                if [[ "$UNINSTALLER_FOUND" == /opt/* ]]; then
-                    warn "Admin privileges needed to uninstall!"
-                else
-                    "$UNINSTALLER_FOUND" --remove-caches --remove-config-files user --remove-user-data
-                    EXIT_CODE=$?
-                    if (( EXIT_CODE == 0 )); then
-                        UNINSTALLER_RAN=true
-                        info "Uninstaller completed successfully (exit code: 0)."
-                    else
-                        warn "Uninstaller exited with non-zero code: $EXIT_CODE"
-                        info "You may need to review the uninstall manually or run cleanup."
-                    fi
-                fi
-            fi
-        else
-            info "Skipped official uninstaller."
-        fi
-    else
-        info "No official uninstaller detected; will proceed with manual cleanup (next section)."
-    fi
+# ------------------------------ Cleanup Stage --------------------------------
+if $DO_CLEAN; then
+  apply_cleanup_selection ""   # interactive selection; pass a preset string to automate
 fi
 
-# Clean dirs / configs - ONLY if uninstaller didn't run
-if $DO_CLEAN && ! $UNINSTALLER_RAN; then
-    info "Offering to clean up Anaconda directories and configs..."
-    
-    # Build array of existing items
-    declare -a CLEANUP_ITEMS
-    declare -a CLEANUP_PATHS
-    declare -a CLEANUP_DESCS
-    
-    local idx=0
-    
-    # Check each item and add if it exists
-    if [[ -e "$ANACONDA_PATH" ]]; then
-        CLEANUP_ITEMS[$idx]="Anaconda root"
-        CLEANUP_PATHS[$idx]="$ANACONDA_PATH"
-        CLEANUP_DESCS[$idx]="Installation directory"
-        ((idx++))
-    fi
-    if [[ -e "$HOME/miniconda3" ]]; then
-        CLEANUP_ITEMS[$idx]="~/miniconda3"
-        CLEANUP_PATHS[$idx]="$HOME/miniconda3"
-        CLEANUP_DESCS[$idx]="Miniconda user dir"
-        ((idx++))
-    fi
-    if [[ -e "$HOME/.conda" ]]; then
-        CLEANUP_ITEMS[$idx]="~/.conda"
-        CLEANUP_PATHS[$idx]="$HOME/.conda"
-        CLEANUP_DESCS[$idx]="Conda config directory"
-        ((idx++))
-    fi
-    if [[ -e "$HOME/.continuum" ]]; then
-        CLEANUP_ITEMS[$idx]="~/.continuum"
-        CLEANUP_PATHS[$idx]="$HOME/.continuum"
-        CLEANUP_DESCS[$idx]="Legacy Continuum config"
-        ((idx++))
-    fi
-    if [[ -e "$HOME/.condarc" ]]; then
-        CLEANUP_ITEMS[$idx]="~/.condarc"
-        CLEANUP_PATHS[$idx]="$HOME/.condarc"
-        CLEANUP_DESCS[$idx]="Conda config file"
-        ((idx++))
-    fi
-    
-    if (( idx == 0 )); then
-        info "No Anaconda directories or configs found to clean."
-    else
-        echo ""
-        echo "Found the following Anaconda-related directories and configs:"
-        echo ""
-        for i in "${!CLEANUP_ITEMS[@]}"; do
-            printf "%d) %-30s (%s)\n" "$((i+1))" "${CLEANUP_ITEMS[$i]}" "${CLEANUP_DESCS[$i]}"
-            echo "   Path: ${CLEANUP_PATHS[$i]}"
-        done
-        echo ""
-        echo "a) Remove all"
-        echo "n) Remove none"
-        echo ""
-        read -r -p "Select items to remove (e.g. '1 3 5' or 'a' or 'n'): " selection
-        
-        ITEMS_TO_REMOVE=()
-        
-        if [[ "$selection" == "a" ]]; then
-            ITEMS_TO_REMOVE=("${CLEANUP_PATHS[@]}")
-        elif [[ "$selection" != "n" ]]; then
-            for idx in $selection; do
-                if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx >= 1 && idx <= ${#CLEANUP_PATHS[@]} )); then
-                    ITEMS_TO_REMOVE+=("${CLEANUP_PATHS[$((idx-1))]}")
-                else
-                    warn "Ignoring invalid selection: $idx"
-                fi
-            done
-        fi
-        
-        if (( ${#ITEMS_TO_REMOVE[@]} > 0 )); then
-            echo ""
-            echo "─────────────────────────────────────────────────────────────"
-            echo "  FINAL CONFIRMATION"
-            echo "─────────────────────────────────────────────────────────────"
-            echo "About to remove:"
-            for item in "${ITEMS_TO_REMOVE[@]}"; do
-                echo "  - $item"
-            done
-            echo ""
-            
-            if confirm "Are you absolutely sure? This cannot be undone."; then
-                for item in "${ITEMS_TO_REMOVE[@]}"; do
-                    if [[ -e "$item" ]]; then
-                        if $DRY_RUN; then
-                            dry_run_msg "Would remove: $item"
-                        else
-                            info "Removing $item"
-                            rm -rf "$item"
-                        fi
-                    fi
-                done
-            else
-                info "Cleanup cancelled."
-            fi
-        else
-            info "No items selected for removal."
-        fi
-    fi
-elif $DO_CLEAN && $UNINSTALLER_RAN; then
-    info "Official uninstaller ran successfully. Skipping directory cleanup."
-fi
-
+# ------------------------------ Epilogue -------------------------------------
 echo ""
 echo "✓ Anaconda removal procedure complete."
 if $DRY_RUN; then
-    echo "🔧 This was a dry-run. No actual changes were made."
-    echo "   Run without --dry-run to perform the actual uninstallation."
+  echo "🔧 This was a dry run. No changes were made."
+  echo "   Re-run without --dry-run to perform actions."
 else
-    echo "⚠️  Restart shell before installing Miniforge."
-    echo ""
-    echo "Next steps:"
-    echo "  1. Close and reopen your terminal"
-    echo "  2. Run the Miniforge installation script"
-    echo "  3. Your exports are preserved in: $EXPORT_DIR"
+  echo "⚠️  Restart your shell before installing Miniforge."
+  echo ""
+  echo "Next steps:"
+  echo "  1) Close and reopen your terminal"
+  echo "  2) Install Miniforge"
+  echo "  3) Your exports are in: $EXPORT_DIR"
 fi

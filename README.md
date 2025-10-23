@@ -297,63 +297,67 @@ Integrare Miniforge (preferendo `mamba`) e `uv` seguendo un approccio stratifica
 
 ### Script di automazione
 
-Per semplificare il processo di migrazione, sono disponibili **quattro script** (due script Bash, due script PowerShell) che automatizzano la migrazione end-to-end. Ogni coppia implementa la stessa logica.
+Per semplificare il processo di migrazione, sono disponibili **quattro script** (due Bash, due PowerShell) che automatizzano la migrazione end-to-end. Ogni coppia implementa la stessa logica.
 
 **Script:**
-1. `anaconda_uninstall.sh` / `anaconda_uninstall.ps1` — Esporta e valida gli ambienti, de-inizializza conda, (opz.) esegue `anaconda-clean`, disinstalla e pulisce residui.
+1. `anaconda_uninstall.sh` / `anaconda_uninstall.ps1` — Esporta e valida gli ambienti (selezione interattiva di default; opzione “tutti” disponibile), de-inizializza conda, (opz.) esegue `anaconda-clean`, disinstalla e pulisce residui.
 2. `miniforge_install.sh` / `miniforge_install.ps1` — Installa Miniforge (user-scope), inizializza shell e config (`conda-forge`, `channel_priority strict`, `auto_activate_base false`), (opz.) importa gli ambienti esportati.
 
-#### Riferimento argomenti (Bash ↔ PowerShell)
+#### Riferimento argomenti (Bash & PowerShell)
 
 ##### Uninstaller — `anaconda_uninstall.*`
 
 - **Bash:**
 	+ `--export-only | --deinit-only | --uninstall-only`  _(mutuamente esclusive)_
 	+ `--export-all`, `--from-history`, `--export-dir PATH`
-	+ `--anaconda-path DIR` (predefinito `~/anaconda3`; lo script controlla anche `~/miniconda3`, `/opt/...`)
+	+ `--anaconda-path DIR` (se non fornito: ricerca fra `~/anaconda3`, `~/miniconda3`, `/opt/`...; se fornito: usa **solo `DIR`**)
+	+ `--with-anaconda-clean` (pre-uninstall), `--backup` (in cleanup rinomina in `.old...`)
 	+ `--yes` (assumi sì), `--dry-run` (anteprima senza effetti)
 - **PowerShell:** 
 	+ `-ExportOnly | -DeinitOnly | -UninstallOnly | -CleanOnly` _(mutuamente esclusive via parameter sets)_
 	+ `-ExportAll`, `-FromHistory`, `-ExportDir PATH`
-	+ `-AnacondaPath DIR` (auto-rileva anche `%USERPROFILE%\anaconda3`, `%LOCALAPPDATA%\anaconda3`, `%USERPROFILE%\miniconda3`, `%LOCALAPPDATA%\miniconda3`, `C:\Anaconda3`, `C:\Miniconda3`)
-	+ `-Yes` (assumi sì), `-DryRun` (abilita globalmente **-WhatIf** - tutte le operazioni distruttive usano `ShouldProcess` → funzionano `-WhatIf/-Confirm`)
+	+ `-AnacondaPath DIR` (se non fornito: auto-rileva fra `%USERPROFILE%\anaconda3`, `%LOCALAPPDATA%\anaconda3`, `%USERPROFILE%\miniconda3`, `%LOCALAPPDATA%\miniconda3`, `C:\Anaconda3`, `C:\Miniconda3`; se fornito: usa **solo `DIR`**)
+	+ `-WithAnacondaClean` (pre-uninstall), `-BackupDirs` (in cleanup rinomina in `.old...`)
+	+ `-DryRun` (abilita globalmente **-WhatIf** - tutte le operazioni distruttive usano `ShouldProcess` → funzionano `-WhatIf/-Confirm`)
 
 **Note:**
 - `--from-history` / `-FromHistory` esporta solo i pacchetti installati esplicitamente (spec più snella; il risolutore ricostruisce le dipendenze in import).
 - Gli YAML sono **validati** (devono contenere `name:` e `dependencies:` non vuoto).
 - Bash rifiuta in esecuzione come **root**.
-- PowerShell rifiuta in esecuzione come **Administrator**.
 
 #### Installer — `miniforge_install.*`
 
 - **Bash:**
-	+ `--no-install`, `--no-init`, `--no-import` oppure `--init-only | --import-only`
-	+ `--test-install`, `--test-init` _read-only tests_
+	+ `--no-install`, `--no-init`, `--no-import` oppure `--init-only | --install-only | --import-only`
+	+ `--test-install`, `--test-init` _read-only_ tests
 	+ `--miniforge-prefix DIR` (predefinito `~/miniforge3`)
+	+ `--export-dir` (cartella di esportazione di YAML spec file - predefinito `~/conda_migration_exports`)
+	+ `--skip-base` (non importa / aggiorna l'ambiente `base`)
 	+ `--yes`, `--dry-run`
 - **PowerShell:** 
-	+ `-NoInstall`, `-NoInit`, `-NoImport` oppure `-InitOnly | -ImportOnly` _(mutuamente esclusive via parameter sets)_
+	+ `-NoInstall`, `-NoInit`, `-NoImport` oppure `-InitOnly | -InstallOnly | -ImportOnly` _(mutuamente esclusive via parameter sets)_
 	+ `-TestInstall`, `-TestInit` _read-only_ tests
 	+ `-MiniforgePrefix DIR` (predefinito `%USERPROFILE%\miniforge3`)
-	+ `-Yes`, `-DryRun`
+	+ `-ExportDir` (cartella di esportazione di YAML spec file - predefinito `%USERPROFILE%\conda_migration_exports`)
+	+ `-SkipBase` (non importa / aggiorna l'ambiente `base`)
+	+ `-DryRun`
 
-#### Workflow di migrazione **conservativo**
+#### Migrazione **conservativa**
 
 Sequenza pensata per minimizzare i rischi e mantenere opzioni di rollback.
 
 1. **Export & validazione** (Anaconda ancora presente)
     - **Unix:**
-        `<path to script>/anaconda_uninstall.sh --export-only --export-all [--from-history]`
+        `<path to script>/anaconda_uninstall.sh --export-only [--export-all] [--from-history]`
     - **Windows:**
-        `<path to script>\anaconda_uninstall.ps1 -ExportOnly -ExportAll [-FromHistory]`
+        `<path to script>\anaconda_uninstall.ps1 -ExportOnly [-ExportAll] [-FromHistory]`
 2. **Installa Miniforge — senza init**
 	Installa in **prefix utente**; non aggiungere al PATH.
     - **Unix:** 
-	    `<path to script>/miniforge_install.sh --no-init`
+	    `<path to script>/miniforge_install.sh --no-init [--miniforge-prefix <DIR>]`
     - **Windows:** 
-	    `<path to script>\miniforge_install.ps1 -NoInit`  
+	    `<path to script>\miniforge_install.ps1 -NoInit [-MiniforgePrefix <DIR>]`  
 3. **Test d’installazione (senza init)**
-	Esegui per percorso completo: 
 	- **Unix:**
 		`<miniforge prefix>/bin/conda --version`
 		`<miniforge prefix>/bin/mamba --version`
@@ -362,7 +366,7 @@ Sequenza pensata per minimizzare i rischi e mantenere opzioni di rollback.
 		`<miniforge prefix>\Library\bin\mamba.exe --version`
 	Percorso di default:
 	- **Unix**: `~/miniforge3`
-	- **Windws**: `$env:LOCALAPPDATA/miniforge3` (PowerShell), `%LOCALAPPDATA%/miniforge3` (cmd)
+	- **Windws**: `$env:LOCALAPPDATA/miniforge3`
 4. **De-init di Anaconda**
     - **Unix:**
 	    `./anaconda_uninstall.sh --deinit-only`
@@ -370,22 +374,23 @@ Sequenza pensata per minimizzare i rischi e mantenere opzioni di rollback.
 	    `.\anaconda_uninstall.ps1 -DeinitOnly`
 5. **Disinstalla Anaconda** (poi opzionale **Clean**)
     - **Unix:**
-        - `./anaconda_uninstall.sh --uninstall-only [--no-anaconda-clean]`
+        - `./anaconda_uninstall.sh --uninstall-only[--with-anaconda-clean] [--backup] [--anaconda-path <DIR>]`
     - **Windows:**
-        - `.\anaconda_uninstall.ps1 -UninstallOnly [-NoAnacondaClean]`
+        - `.\anaconda_uninstall.ps1 -UninstallOnly[-WithAnacondaClean] [-BackupDirs] [-AnacondaPath <DIR>]`
+	**_Nota:_** “uninstall-only” salta **solo** l’export; esegue comunque **deinit + uninstall + clean/backup**.
 6. **Riavvia il terminale** e verifica che `conda` **non** sia più nel PATH.
 7. **Init di Miniforge**
     - **Unix:** 
-	    `./miniforge_install.sh --init-only`
+	    `./miniforge_install.sh --init-only [--miniforge-prefix <DIR>]`
     - **Windows:** 
-	    `.\miniforge_install.ps1 -InitOnly`  
+	    `.\miniforge_install.ps1 -InitOnly [-MiniforgePrefix <DIR>]`  
 8. **Test init**
     - Nuova shell: `conda info`, `conda env list` → ok; `base` non deve auto-attivarsi.
 9. **Import degli ambienti**
     - **Unix:**
-	    `./miniforge_install.sh --import-only --export-dir <DIR>`
+	    `./miniforge_install.sh --import-only --export-dir <DIR> [--skip-base] [--miniforge-prefix <DIR>]`
     - **Windows:**
-	    `.\miniforge_install.ps1 -ImportOnly -ExportDir <DIR>` 
+	    `.\miniforge_install.ps1 -ImportOnly -ExportDir <DIR> [-SkipBase] [-MiniforgePrefix <DIR>]` 
  
 ### Link utili
 
