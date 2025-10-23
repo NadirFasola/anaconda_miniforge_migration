@@ -83,8 +83,8 @@ function Get-MambaPath([string]$prefix) {
 function Test-ValidYaml([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
     $text = Get-Content -LiteralPath $Path -Raw
-    $hasName = ($text -match '^\s*name:\s*\S' )
-    $hasDeps = ($text -match '^\s*dependencies:\s*' -and $text -match '^\s*-\s*\S')
+    $hasName = ($text -match '(?m)^\s*name:\s*.+' )
+    $hasDeps = ($text -match '(?m)^(\s*)dependencies\s*:\s*\n(\1\s+-\s+.+(\n | $))+')
     return ($hasName -and $hasDeps)
 }
 

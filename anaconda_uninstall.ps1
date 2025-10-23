@@ -276,8 +276,8 @@ function Test-ExportYaml([string]$Path) {
     if (-not (Test-Path $Path)) { Warn "Export file not found: $Path"; return $false }
     # Minimal structural validation: name + dependencies list present
     $text = Get-Content -Path $Path -Raw
-    $hasName = ($text -match '^\s*name:\s*.+')
-    $hasDeps = ($text -match '^\s*dependencies:\s*\[' -or $text -match '^\s*-\s*\S')
+    $hasName = ($text -match '(?m)^\s*name:\s*.+' )
+    $hasDeps = ($text -match '(?m)^(\s*)dependencies\s*:\s*\n(\1\s+-\s+.+(\n | $))+')
     if (-not $hasName) { Warn "Missing 'name:' in $Path" }
     if (-not $hasDeps) { Warn "No dependencies listed in $Path" }
     return ($hasName -and $hasDeps)

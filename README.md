@@ -346,6 +346,12 @@ Per semplificare il processo di migrazione, sono disponibili **quattro script** 
 
 Sequenza pensata per minimizzare i rischi e mantenere opzioni di rollback.
 
+0. **\[Windows-only\] Vericare che PowerShell possa eseguire script**
+	Eseguire `Get-ExecutionPolicy -List` e verificare che `UserPolicy` **o** `CurrentUser` non siano `Restricted` o `Undefined`. In caso contrario, eseguire
+	```powershell
+	Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+	```
+	per abilitare l'esecuzione di script `*.ps1`.
 1. **Export & validazione** (Anaconda ancora presente)
     - **Unix:**
         `<path to script>/anaconda_uninstall.sh --export-only [--export-all] [--from-history]`
