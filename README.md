@@ -18,7 +18,7 @@ Entrambi gli strumenti si basano sullo stesso ecosistema, **Conda**, e sono inte
 | Aggiornamenti            | Rilasci gestiti da Anaconda Inc.                                                               | Rilasci comunitari tramite Conda-Forge                                               |
 | Compatibilità ambienti   | Formato `.yml` standard                                                                        | Formato `.yml` standard                                                              |
 | Strumenti inclusi        | IDE + GUI opzionali                                                                            | N/A                                                                                  |
-Alcune osservazioni operative:
+
 - **Compatibilità:** gli ambienti creati con Anaconda sono pienamente ricreabili in Miniforge, purché i pacchetti siano disponibili su `conda-forge` (che comunque copre oltre il 99% dell'ecosistema Conda).
 - **Performance:** l'uso di `mamba` consente una risoluzione delle dipendenze significativamente più rapida rispetto a `conda`.
 - **Licenza:** Miniforge non impone limitazioni per l'utilizzo in contesti aziendali o commerciali (cf. [miniforge/LICENSE at main · conda-forge/miniforge](https://github.com/conda-forge/miniforge/blob/main/LICENSE))
