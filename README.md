@@ -291,7 +291,7 @@ Integrare Miniforge (preferendo `mamba`) e `uv` seguendo un approccio stratifica
 	requires = ["hatchling"]
 	build-backend = "hatchling.build"
 	```
-	Fissando le dipendenze in maniera deterministica tramite `uv lock` e sincronizzando con `uv sync`. Inoltre, `uv` rileva automaticamente quando viene eseguito all'interno di un ambiente Conda, e installa dipendenze direttamente nel contesto di tale ambiente, evitando ambienti virtuali sovrapposti inutilmente.
+	fissando le dipendenze in maniera deterministica tramite `uv lock` e sincronizzando con `uv sync`. Inoltre, `uv` rileva automaticamente quando viene eseguito all'interno di un ambiente Conda, e installa dipendenze direttamente nel suo contesto, evitando ambienti virtuali sovrapposti inutilmente.
 
 ## Appendice e riferimenti
 
@@ -405,15 +405,17 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
-  - numpy=1.26.*
-  - pandas=2.1.*
-  - scikit-learn
-  - matplotlib
-  - jupyterlab
+  - jupyter=1.1
+  - uv=0.9
+  - nodejs=24.9
+  - rust=1.89
 ```
 
 > [!WARNING]
-> Tutti i pacchetti devono essere risolvibili dal canale `conda-forge` per garantire compatibilità e velocità con `mamba`.
+> Tutti i pacchetti devono essere risolvibili dal canale `conda-forge` per garantire compatibilità e velocità con `mamba`. Verificare con
+> ```conda repoquery search -c conda-forge <package>```
+> oppure con
+> ```mamba repoquery search -c conda-forge <package>```
 
 ### WSL
 
