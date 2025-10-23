@@ -347,6 +347,7 @@ Per semplificare il processo di migrazione, sono disponibili **quattro script** 
 Sequenza pensata per minimizzare i rischi e mantenere opzioni di rollback.
 
 0. **\[Windows-only\] Vericare che PowerShell possa eseguire script**
+
 	Eseguire `Get-ExecutionPolicy -List` e verificare che `UserPolicy` **o** `CurrentUser` non siano `Restricted` o `Undefined`. In caso contrario, eseguire
 	```powershell
 	Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
