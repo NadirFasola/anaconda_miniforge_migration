@@ -152,7 +152,7 @@ function Initialize-Conda {
         return
     }
 
-    if ($PSCmdlet.ShouldProcess("All shells", "conda init --all")) {
+    if ($PSCmdlet.ShouldProcess("powershell", "conda init powershell")) {
         & $conda init --all | Out-Null
     }
     if ($PSCmdlet.ShouldProcess("conda config", "Set auto_activate_base false")) {
