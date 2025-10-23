@@ -278,9 +278,9 @@ Integrare Miniforge (preferendo `mamba`) e `uv` seguendo un approccio stratifica
 1. **Delegare a `uv` la gestione dei pacchetti Python**, definendo metadati e dipendenze in `pyproject.toml`, e.g.
 	```toml
 	[project]
-	name = <project_name>
-	version = <project_ver>
-	description = <project_desc>
+	name = "<project_name>"
+	version = "<project_ver>"
+	description = "<project_desc>"
 	dependencies = [
 		"pandas",
 		"numpy",
